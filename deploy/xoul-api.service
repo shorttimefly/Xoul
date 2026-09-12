@@ -1,0 +1,18 @@
+[Unit]
+Description=XOUL local API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/xoul-v2
+ExecStart=/usr/bin/python3 /var/www/xoul-v2/server.py
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
