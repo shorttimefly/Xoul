@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#ffffff">
+  <title>XOUL · 产品助手</title>
+  <link rel="icon" href="/favicon.svg">
+  <link rel="stylesheet" href="/public.css">
+  <link rel="stylesheet" href="/chat-ui-kit.css">
+</head>
+<body>
+  <main class="experience-shell">
+    <section id="state" class="state-card" hidden role="status"></section>
+    <section id="app" hidden>
+      <header class="chat-header">
+        <div class="header-identity"><span class="brand-mark" aria-hidden="true">X</span><div><h1 id="product-name"></h1><span id="agent-name">产品助手</span></div></div>
+        <button id="new-chat" class="quiet-button" type="button">＋ 新对话</button>
+      </header>
+      <section id="chat-root" class="chat-root" aria-label="与产品助手对话"></section>
+    </section>
+  </main>
+  <script src="/data.js" defer></script>
+  <script src="/chat-ui-kit.js" defer></script>
+  <script src="/public.js" defer></script>
+</body>
+</html>

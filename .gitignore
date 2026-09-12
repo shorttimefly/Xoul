@@ -1,0 +1,7 @@
+# Local vendor download exceeds GitHub's 100 MB single-file limit.
+/vendor/cherry-studio.tar.gz
+
+# OS/editor artifacts
+.DS_Store
+.idea/
+.vscode/
