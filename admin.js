@@ -12,8 +12,6 @@
   const fieldMap={
     productName:['name'],productType:['type'],productIntro:['intro'],
     agentName:['agent','name'],agentTone:['agent','tone'],agentWelcome:['agent','welcome'],agentRole:['agent','role'],agentRules:['agent','rules'],memoryEnabled:['agent','memory'],
-    modelProvider:['model','provider'],modelName:['model','name'],modelBaseUrl:['model','base_url'],modelApiKey:['model','api_key'],
-    modelTemperature:['model','temperature'],modelMaxTokens:['model','max_tokens'],modelStreaming:['model','streaming'],
     workflowMaxIterations:['workflow_options','max_iterations'],workflowFailurePolicy:['workflow_options','failure_policy']
   };
   function el(tag,cls,text){const n=document.createElement(tag);if(cls)n.className=cls;if(text!==undefined)n.textContent=text;return n;}
@@ -31,13 +29,9 @@
   function populateSharedCatalog(){
     const shared=catalog(), type=$('productType');
     if(shared.types.length){type.replaceChildren(...shared.types.map(x=>new Option(x.name,x.id)));}
-    const anchor=$('modelProvider')?.parentElement;
-    if(anchor && shared.models.length && !$('modelProfile')){
-      const label=el('label','','公共模型配置');const select=el('select');select.id='modelProfile';
-      shared.models.forEach(x=>select.add(new Option(x.name,x.id)));select.value=current?.model_profile_id||shared.models[0].id;
-      select.onchange=()=>{current.model_profile_id=select.value;const profile=shared.models.find(x=>x.id===select.value);if(profile){current.model={...current.model,provider:profile.provider||'',base_url:profile.base_url||'',name:profile.model||''};fill();}mark();};label.append(select);anchor.parentElement.prepend(label);
-    }
-    ['modelProvider','modelName','modelBaseUrl','modelApiKey','modelTemperature','modelMaxTokens','modelStreaming'].forEach(id=>{if($(id))$(id).disabled=true;});
+    const select=$('modelProfile'); if(!select)return;
+    select.replaceChildren(...shared.models.map(x=>{const option=new Option(x.name+(x.enabled===false?'（已停用）':''),x.id);option.disabled=x.enabled===false;return option;}));
+    select.onchange=()=>{current.model_profile_id=select.value;current.model={};renderModelSummary();mark();};
   }
   function normalize(product){
     const p=clone(product);p.agent={...seed.agent,...p.agent};p.model={...seed.model,...p.model};
@@ -50,7 +44,8 @@
   function notice(message){clearTimeout(noticeTimer);$('notice').textContent=message;$('notice').hidden=false;noticeTimer=setTimeout(()=>$('notice').hidden=true,4200);}
   function persist(){
     const products=load(),index=products.findIndex(p=>p.id===current.id);
-    if(index<0)products.push(clone(current));else products[index]=clone(current);
+    const saved=clone(current);saved.model={};
+    if(index<0)products.push(saved);else products[index]=saved;
     localStorage.setItem(KEY,JSON.stringify(products));
     syncBackend(products);
     dirty=false;$('saveState').textContent='本地已保存';$('dirtyHint').textContent='所有修改已保存';renderProducts();stats();
@@ -96,9 +91,7 @@
   });
   $('configTabs').setAttribute('role','tablist');
   populateSharedCatalog();
-  panels[3].querySelector('.panel-title p').textContent='设置模型参数；当前页面仅保存配置';
-  const modelHint=el('p','panel-hint','模型服务尚未连接。当前是本机演示配置，请勿填写真实 API Key。');
-  panels[3].querySelector('.panel-title').after(modelHint);
+  panels[3].querySelector('.panel-title p').textContent='从公共模型库选择；产品只保存模型引用';
   const imageUnderstanding=el('div','image-understanding');imageUnderstanding.hidden=true;$('imagePreview').after(imageUnderstanding);
   function understandingText(result){return [['主体',result.subject],['场景',result.scene],['使用场景',Array.isArray(result.use_cases)?result.use_cases.join('、'):result.use_cases],['适用人群',Array.isArray(result.suitable_for)?result.suitable_for.join('、'):result.suitable_for],['使用方法',result.usage_method],['安全提示',Array.isArray(result.safety)?result.safety.join('、'):result.safety]].filter(([,value])=>value).map(([label,value])=>label+'：'+value).join('\n');}
   function renderImageUnderstanding(result){
@@ -122,7 +115,6 @@
   panels[4].querySelector('.panel-title p').textContent='配置可用步骤；模型会根据用户问题灵活选择，不必机械执行全部步骤';
   panels[5].querySelector('h3').textContent='对话引导卡片';
   panels[5].querySelector('.panel-title p').textContent='显示在助手欢迎消息内，点击即可开始';
-  $('modelApiKey').placeholder='本地演示，请勿输入真实密钥';
   $('productImage').setAttribute('capture','environment');
   $('agentRules').placeholder='优先使用产品知识；明确回答范围与边界。';
   Object.entries(fieldMap).forEach(([id,path])=>{
@@ -139,7 +131,7 @@
       if(input.type==='checkbox')input.checked=!!value;
       else {if(input.tagName==='SELECT'&&value!=null&&![...input.options].some(o=>o.value===String(value)))input.add(new Option(String(value),String(value)));input.value=value??'';}
     });
-    if($('modelProfile'))$('modelProfile').value=current.model_profile_id||'';
+    if($('modelProfile')){$('modelProfile').value=current.model_profile_id||'';renderModelSummary();}
     $('productId').textContent=current.id;$('entrySlug').textContent='/e/'+current.slug;
     productPrompt.value=current.prompt||'';
     const preview=$('imagePreview'), previewImg=preview.querySelector('img');
@@ -149,6 +141,13 @@
     $('statusText').textContent=current.enabled?'入口已启用':'入口已停用';$('productStatus').classList.toggle('off',!current.enabled);
     $('toggleStatus').textContent=current.enabled?'停用入口':'启用入口';
     renderExtraFields();renderKnowledge();renderWorkflow();renderCards();stats();tab(activeTab);
+  }
+  function renderModelSummary(){
+    const summary=$('modelProfileSummary'), selected=catalog().models.find(x=>x.id===$('modelProfile')?.value);
+    if(!summary)return;
+    if(!selected){summary.textContent='尚未选择公共模型，请先到“模型接入”创建并启用一个模型。';summary.className='model-profile-summary warning';return;}
+    const connection=[selected.provider,selected.model||selected.name].filter(Boolean).join(' · ');
+    summary.textContent=(connection||'未填写连接信息')+' · '+(selected.base_url?'已配置接口':'待配置接口');summary.className='model-profile-summary'+(selected.enabled===false?' warning':'');
   }
   function select(id){
     if(dirty&&!confirm('当前产品还有未保存的修改。放弃修改并切换？'))return;

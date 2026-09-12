@@ -14,6 +14,7 @@
 - Knowledge：简单的文字知识条目管理；支持导入 `.md`、PNG/JPG/WebP 图片并作为可编辑知识条目绑定到当前产品。
 - Extensible product context：产品支持自定义 `extra_fields` key/value 数组；非空字段会和产品 Prompt、类型 Prompt、图片理解结果、知识条目一起注入 C 端对话上下文。知识库图片只注入标题和说明，不默认发送给模型；用户询问图片/示意时由聊天界面按需展示。
 - Agent Definition：角色、语气、回答规则、记忆开关。
+- Shared Model Reference：模型连接只在公共模型库维护；产品仅选择 `model_profile_id`，不保存 Provider、接口地址或 API Key。
 - Workflow Definition：开放式步骤配置；步骤作为模型编排约束注入上下文，由模型按问题选择需要的知识和步骤，不强制机械执行全部步骤。当前不是独立的检索/工具编排引擎。
 - Capability Cards：产品级可配置引导卡片。
 - C 端 Experience：产品身份、卡片、聊天记录和模拟引用；知识库图片仅在用户明确询问图片/示意/外观时由聊天区按需展示。
