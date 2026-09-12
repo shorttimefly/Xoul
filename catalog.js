@@ -43,13 +43,14 @@
   function inputField(label, value, key, type, wide) {
     const wrapper = document.createElement('label'); if (wide) wrapper.className = 'wide'; wrapper.textContent = label;
     const input = document.createElement(type === 'textarea' ? 'textarea' : 'input'); input.name = key; input.value = value ?? '';
+    if (type !== 'textarea') input.autocomplete = key === 'api_key' ? 'new-password' : 'off';
     if (type !== 'textarea') input.type = type || 'text'; else input.rows = 4;
     wrapper.append(input); return wrapper;
   }
   function renderList() {
     const list = $(collectionKey + 'List'); list.replaceChildren();
     const items = data[collectionKey].filter(item => ((item.name || '') + ' ' + (item.provider || '') + ' ' + (item.model || '')).toLowerCase().includes(query));
-    $('listCount').textContent = String(items.length);
+    $('listCount').textContent = String(items.length); $('collectionHint').textContent = '共 ' + items.length + ' 项';
     if (!items.length) { const empty = document.createElement('div'); empty.className = 'catalog-empty'; empty.textContent = query ? '没有匹配的配置。' : config.empty; list.append(empty); return; }
     items.forEach(item => {
       const row = document.createElement('article'); row.className = 'catalog-row' + (item.id === selectedId ? ' selected' : '');
