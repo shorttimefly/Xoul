@@ -1,5 +1,6 @@
 # Local vendor download exceeds GitHub's 100 MB single-file limit.
 /vendor/cherry-studio.tar.gz
+/.xoul.local.json
 
 # OS/editor artifacts
 .DS_Store

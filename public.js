@@ -41,18 +41,17 @@
     const historyKey='xoul:chat:v2:'+config.product.id+':'+config.experience.id;
     let history=[];
     try{history=JSON.parse(localStorage.getItem(historyKey)||'[]');if(!Array.isArray(history))history=[];}catch(_){}
+    const API_BASE=(window.XOUL_API_BASE||((location.protocol==='http:'||location.protocol==='https:')?'http://127.0.0.1:8780':''));
     const adapter={
-      async send({message,signal}){
-        await new Promise((resolve,reject)=>{
-          const timer=setTimeout(resolve,450);
-          signal.addEventListener('abort',()=>{clearTimeout(timer);reject(new Error('已停止'));},{once:true});
-        });
-        const entries=(config.knowledge?.entries||[]).filter(k=>k.content?.trim());
-        if(!entries.length)return {text:'我还在认识自己，暂时没有可用的知识资料。等我的主人补充好内容，我们就能聊得更多了。',sources:[]};
-        const words=message.replace(/[？?，,。！!]/g,' ').split(/\s+/).filter(Boolean);
-        const ranked=entries.map(k=>({k,score:words.reduce((n,w)=>n+((k.title+' '+k.content).includes(w)?1:0),0)})).sort((a,b)=>b.score-a.score);
-        const selected=ranked.slice(0,2).map(x=>x.k);
-        return {text:'我找到了自己的相关资料，我们一起看看：\n\n'+selected.map(k=>k.title+'\n'+k.content).join('\n\n'),sources:selected};
+      async *send({message,messages,signal}){
+        const history=messages?.[messages.length-1]?.role==='user'?messages.slice(0,-1):messages;
+        const response=await fetch(API_BASE+'/api/v1/public/experiences/'+encodeURIComponent(slug)+'/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message,messages:history}),signal});
+        if(!response.ok){let detail='模型服务暂不可用';try{detail=(await response.json()).error?.message||detail;}catch(_){}throw new Error(detail);}
+        if(!response.body)throw new Error('模型服务未返回流式响应');
+        const reader=response.body.getReader(),decoder=new TextDecoder();let buffer='';
+        try{
+          while(true){const chunk=await reader.read();if(chunk.done)break;buffer+=decoder.decode(chunk.value,{stream:true});const lines=buffer.split(/\r?\n/);buffer=lines.pop()||'';for(const line of lines){if(!line.startsWith('data:'))continue;const data=line.slice(5).trim();if(data==='[DONE]')return;try{const event=JSON.parse(data);if(event.type==='delta'&&event.text)yield event;}catch(_){} }}
+        }finally{reader.releaseLock();}
       }
     };
     window.xoulChat=window.XoulChatUI.create({

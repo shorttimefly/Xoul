@@ -23,7 +23,11 @@
     const data=JSON.parse(raw);if(!Array.isArray(data)||!data.length)throw new Error('产品数据格式无效');
     return data;
   }
-  function catalog(){try{return JSON.parse(localStorage.getItem(CATALOG_KEY))||{types:[],models:[]};}catch(_){return {types:[],models:[]};}}
+  function catalog(){
+    const defaults={types:[{id:'fitness_equipment',name:'健身器材',prompt:'你是懂训练与安全的健身器材伙伴。',image:''},{id:'consumer_product',name:'消费产品',prompt:'你是温和、可靠的产品伙伴。',image:''}],models:[{id:'default_local',name:'本地演示模型',provider:'OpenAI-compatible',base_url:'',model:'',temperature:.3,max_tokens:2048,api_key:''}]};
+    try{const value=JSON.parse(localStorage.getItem(CATALOG_KEY));if(value?.types?.length&&value?.models?.length)return value;localStorage.setItem(CATALOG_KEY,JSON.stringify(defaults));return defaults;}catch(_){return defaults;}
+  }
+  function syncBackend(products){fetch('http://127.0.0.1:8780/api/v1/admin/sync',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({products,catalog:catalog()})}).catch(()=>{});}
   function populateSharedCatalog(){
     const shared=catalog(), type=$('productType');
     if(shared.types.length){type.replaceChildren(...shared.types.map(x=>new Option(x.name,x.id)));}
@@ -33,6 +37,7 @@
       shared.models.forEach(x=>select.add(new Option(x.name,x.id)));select.value=current?.model_profile_id||shared.models[0].id;
       select.onchange=()=>{current.model_profile_id=select.value;const profile=shared.models.find(x=>x.id===select.value);if(profile){current.model={...current.model,provider:profile.provider||'',base_url:profile.base_url||'',name:profile.model||''};fill();}mark();};label.append(select);anchor.parentElement.prepend(label);
     }
+    ['modelProvider','modelName','modelBaseUrl','modelApiKey','modelTemperature','modelMaxTokens','modelStreaming'].forEach(id=>{if($(id))$(id).disabled=true;});
   }
   function normalize(product){
     const p=clone(product);p.agent={...seed.agent,...p.agent};p.model={...seed.model,...p.model};
@@ -46,6 +51,7 @@
     const products=load(),index=products.findIndex(p=>p.id===current.id);
     if(index<0)products.push(clone(current));else products[index]=clone(current);
     localStorage.setItem(KEY,JSON.stringify(products));
+    syncBackend(products);
     dirty=false;$('saveState').textContent='本地已保存';$('dirtyHint').textContent='所有修改已保存';renderProducts();stats();
   }
   function stats(){
@@ -100,6 +106,7 @@
       if(input.type==='checkbox')input.checked=!!value;
       else {if(input.tagName==='SELECT'&&value!=null&&![...input.options].some(o=>o.value===String(value)))input.add(new Option(String(value),String(value)));input.value=value??'';}
     });
+    if($('modelProfile'))$('modelProfile').value=current.model_profile_id||'';
     $('productId').textContent=current.id;$('entrySlug').textContent='/e/'+current.slug;
     const preview=$('imagePreview'), previewImg=preview.querySelector('img');
     preview.hidden=!current.image;
@@ -111,7 +118,10 @@
   function select(id){
     if(dirty&&!confirm('当前产品还有未保存的修改。放弃修改并切换？'))return;
     imageRequest++;imageLoading=false;$('productImage').value='';
-    current=normalize(load().find(p=>p.id===id));dirty=false;$('saveState').textContent='本地已保存';
+    current=normalize(load().find(p=>p.id===id));
+    const models=catalog().models||[];
+    if(!current.model_profile_id&&models.length)current.model_profile_id=models.find(x=>x.model===current.model?.name)?.id||models[0].id;
+    dirty=false;$('saveState').textContent='本地已保存';
     $('dirtyHint').textContent='修改后保存，即可预览';fill();renderProducts();
   }
   function field(label,value,onInput,tag='input'){
@@ -209,5 +219,5 @@
   });
   $('removeImage').onclick=()=>{imageRequest++;imageLoading=false;current.image='';$('productImage').value='';fill();mark();};
   window.addEventListener('beforeunload',event=>{if(dirty){event.preventDefault();event.returnValue='';}});
-  try{select(load()[0].id);}catch(_){notice('本地产品数据无法读取，请检查存储内容；原始数据未被覆盖。');}
+  try{const initial=load();select(initial[0].id);syncBackend(initial.map(item=>item.id===current.id?current:item));}catch(_){notice('本地产品数据无法读取，请检查存储内容；原始数据未被覆盖。');}
 })();

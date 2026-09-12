@@ -21,7 +21,7 @@
 ## Non-goals
 
 - 不开发 NFC 写卡、NFC SDK 或芯片读写。
-- 不接真实模型、真实数据库、对象存储或文档解析服务。
+- 不接真实数据库、对象存储或文档解析服务；模型已支持本地 OpenAI-compatible 代理，需在公共模型配置中填写地址、模型标识和 API Key。
 - 不做多租户、登录、支付、复杂 RBAC、Multi-Agent、拖拽式 Workflow 编辑器。
 
 ## Product contract
@@ -63,4 +63,4 @@ GET  /api/v1/admin/products/{product_id}
 PATCH /api/v1/admin/products/{product_id}
 ```
 
-本轮使用浏览器本地适配器实现同一边界，后续可替换为 FastAPI，不改前端产品模型。
+本地 API 使用 Python 标准库实现：`python3 server.py` 监听 `127.0.0.1:8780`。管理端将产品和公共目录同步到 `.xoul.local.json`；C 端调用 `/api/v1/public/experiences/{slug}/chat`，后端向 `{base_url}/v1/chat/completions` 发起 `stream:true` 请求并将 OpenAI SSE 增量归一化后返回。API Key 只在本机后端文件和上游请求中出现，不进入公开入口响应。
