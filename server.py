@@ -54,23 +54,48 @@ def extract_delta(data):
 def build_messages(type_config, agent_config, entries, history, message, product=None):
     type_config = type_config or {}
     agent_config = agent_config or {}
-    knowledge = "\n\n".join("【%s】\n%s" % (x.get("title", "产品知识"), x.get("content", "")) for x in (entries or []) if x.get("content"))
+    knowledge_parts = []
+    for entry in entries or []:
+        if not isinstance(entry, dict):
+            continue
+        title = str(entry.get("title") or "产品知识")
+        content = entry.get("content")
+        if content:
+            knowledge_parts.append("【%s】\n%s" % (title, content))
+        image = entry.get("image")
+        if isinstance(image, str) and image:
+            knowledge_parts.append("【%s】\n（知识库图片已保存，用户需要时由聊天界面展示）" % title)
+    knowledge = "\n\n".join(knowledge_parts)
     product = product or {}
     understood = product.get("image_understanding") or {}
     image_context = ""
     if understood.get("status") == "ready":
         image_context = "图片理解：\n" + (understood.get("raw_text") or json.dumps({k: understood.get(k) for k in ("subject", "scene", "use_cases", "suitable_for", "usage_method", "safety") if understood.get(k)}, ensure_ascii=False))
+    extra_fields = []
+    for field in product.get("extra_fields") or []:
+        if not isinstance(field, dict):
+            continue
+        key, value = str(field.get("key") or "").strip(), field.get("value")
+        if key and value is not None and str(value).strip():
+            extra_fields.append("%s：%s" % (key, value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)))
+    extra_context = "产品扩展字段：\n" + "\n".join(extra_fields) if extra_fields else ""
+    workflow = product.get("workflow") or []
+    workflow_steps = [step.get("type") if isinstance(step, dict) else step for step in workflow]
+    workflow_context = "开放式工作流：根据用户问题选择必要的步骤和知识内容，不必机械执行全部步骤；可用步骤：" + json.dumps(workflow_steps, ensure_ascii=False) if workflow_steps else ""
+    knowledge_boundary = "知识边界：优先使用产品知识、图片理解结果和扩展字段；知识库没有覆盖时明确说明不确定，不要补充未经知识库支持的外部事实，不主动引入外网信息。"
     parts = [x for x in [
         "你是有温度的产品实体，请用第一人称与用户交流；称呼自己时使用产品名称。回答准确、自然，不要声称看到了图片之外的信息。",
         "产品名称：" + str(product.get("name", "")), "产品介绍：" + str(product.get("intro", "")),
-        product.get("prompt"), type_config.get("prompt"), agent_config.get("role"), agent_config.get("rules"), image_context,
+        knowledge_boundary, workflow_context, product.get("prompt"), type_config.get("prompt"), agent_config.get("role"), agent_config.get("rules"), image_context, extra_context,
         "产品知识：\n" + knowledge if knowledge else ""
     ] if x]
     system = "\n\n".join(parts) or "你是一个友好的产品伙伴，请准确回答用户问题。"
     safe_history = []
     for item in (history or [])[-20:]:
-        if isinstance(item, dict) and item.get("role") in ("user", "assistant") and isinstance(item.get("content"), str):
-            safe_history.append({"role": item["role"], "content": item["content"]})
+        if isinstance(item, dict) and item.get("role") in ("user", "assistant"):
+            content = item.get("content") if isinstance(item.get("content"), str) else item.get("text")
+            if isinstance(content, str):
+                safe_history.append({"role": item["role"], "content": content})
     return [{"role": "system", "content": system}] + safe_history + [{"role": "user", "content": str(message)}]
 
 
@@ -119,9 +144,9 @@ def public_product(product, catalog):
         "product": {"id": product.get("id"), "name": product.get("name"), "description": product.get("intro", ""), "image": product.get("image", ""), "type": product.get("type", "")},
         "experience": {"id": "local_" + str(product.get("id", ""))},
         "agent": {"name": (product.get("agent") or {}).get("name"), "welcome": (product.get("agent") or {}).get("welcome")},
-        "knowledge": {"entries": [{"title": x.get("title", ""), "content": x.get("body", "")} for x in product.get("knowledge", [])]},
+        "knowledge": {"entries": [{"title": x.get("title", ""), "content": x.get("body", ""), "image": x.get("image", ""), "source": x.get("source", "")} for x in product.get("knowledge", [])]},
         "cards": [{"id": x.get("id", "card_%d" % i), "title": x.get("title", ""), "prompt": x.get("prompt", ""), "enabled": x.get("enabled", True), "capability_id": x.get("capability", "custom")} for i, x in enumerate(product.get("cards", []))],
-        "model": {"id": model_id, "name": model.get("name") or (product.get("model") or {}).get("name", ""), "provider": model.get("provider") or (product.get("model") or {}).get("provider", ""), "configured": bool(model.get("api_key") or (product.get("model") or {}).get("api_key"))},
+        "model": {"id": model_id, "name": model.get("name") or (product.get("model") or {}).get("name", ""), "provider": model.get("provider") or (product.get("model") or {}).get("provider", ""), "configured": bool((model.get("base_url") or (product.get("model") or {}).get("base_url")) and (model.get("model") or model.get("name") or (product.get("model") or {}).get("name")) and (model.get("api_key") or (product.get("model") or {}).get("api_key")))},
     }
 
 
@@ -136,7 +161,7 @@ def merge_catalog(incoming, existing):
     old_models = {x.get("id"): x for x in existing.get("models", []) if isinstance(x, dict)}
     for model in result["models"]:
         old = old_models.get(model.get("id"), {})
-        for key in ("api_key", "token", "secret"):
+        for key in ("api_key", "token", "secret", "base_url", "model", "provider"):
             if not model.get(key) and old.get(key):
                 model[key] = old[key]
     return result
@@ -274,7 +299,7 @@ class Handler(BaseHTTPRequestHandler):
         if not base_url or not model or not api_key:
             return self.send_json(503, {"error": {"code": "MODEL_NOT_CONFIGURED", "message": "尚未配置可用的模型地址、模型标识或 API Key"}})
         type_config = next((x for x in catalog.get("types", []) if x.get("id") == product.get("type")), {})
-        messages = build_messages(type_config, product.get("agent"), [{"title": x.get("title"), "content": x.get("body")} for x in product.get("knowledge", [])], body.get("messages"), body.get("message", ""), product)
+        messages = build_messages(type_config, product.get("agent"), [{"title": x.get("title"), "content": x.get("body"), "image": x.get("image")} for x in product.get("knowledge", [])], body.get("messages"), body.get("message", ""), product)
         payload = {"model": model, "messages": messages, "temperature": profile.get("temperature", .3), "max_tokens": profile.get("max_tokens", 2048), "stream": True}
         authorization = api_key if api_key.lower().startswith("bearer ") else "Bearer " + api_key
         request = urllib.request.Request(normalize_chat_url(base_url), data=json.dumps(payload).encode("utf-8"), headers={"Content-Type": "application/json", "Accept": "text/event-stream", "Authorization": authorization}, method="POST")

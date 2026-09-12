@@ -10,7 +10,7 @@
       product: { id:p.id, name:p.name, description:p.intro, image:p.image, type:p.type },
       experience:{ id:'local_'+p.id },
       agent:{ name:p.agent?.name, welcome:p.agent?.welcome },
-      knowledge:{ entries:(p.knowledge||[]).map(k=>({title:k.title,content:k.body})) },
+      knowledge:{ entries:(p.knowledge||[]).map(k=>({title:k.title,content:k.body,image:k.image||'',source:k.source||''})) },
       cards:(p.cards||[]).map((c,i)=>({
         id:c.id||'card_'+i, title:c.title, prompt:c.prompt, enabled:c.enabled!==false,
         capability_id:c.capability === 'custom' && /训练量/.test(c.title) ? 'calculate_training_volume' : c.capability
@@ -24,8 +24,11 @@
     heading.textContent=title;paragraph.textContent=message;element.replaceChildren(heading,paragraph);
     element.hidden=false;document.getElementById('app').hidden=true;
   }
-  try {
-    const config=resolve();
+  async function boot(){
+   try {
+    const API_BASE=(window.XOUL_API_BASE||'http://127.0.0.1:8780').replace(/\/$/,'');
+    let config=resolve();
+    try { const response=await fetch(API_BASE+'/api/v1/public/entrypoints/'+encodeURIComponent(slug)); if(response.ok) config=await response.json(); } catch(_) {}
     if(!config||config.status==='not_found'){state('没有找到这个产品','请确认访问链接或产品入口。');return;}
     if(config.status!=='active'){state('这个入口暂不可用','产品入口已停用，请联系产品提供方。');return;}
     document.title=(config.product.name||'产品助手')+' · XOUL';
@@ -41,7 +44,6 @@
     const historyKey='xoul:chat:v2:'+config.product.id+':'+config.experience.id;
     let history=[];
     try{history=JSON.parse(localStorage.getItem(historyKey)||'[]');if(!Array.isArray(history))history=[];}catch(_){}
-    const API_BASE=(window.XOUL_API_BASE||((location.protocol==='http:'||location.protocol==='https:')?'http://127.0.0.1:8780':''));
     const adapter={
       async *send({message,messages,signal}){
         const history=messages?.[messages.length-1]?.role==='user'?messages.slice(0,-1):messages;
@@ -59,7 +61,9 @@
       onChange(messages){try{localStorage.setItem(historyKey,JSON.stringify(messages.slice(-80)));}catch(_){}}
     });
     document.getElementById('new-chat').onclick=()=>window.xoulChat.reset();
-  } catch(error) {
+   } catch(error) {
     state('暂时无法加载体验','本地配置读取失败。请回到管理端检查产品配置后重试。');
+   }
   }
+  boot();
 })();

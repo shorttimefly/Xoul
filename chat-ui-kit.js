@@ -33,7 +33,7 @@
     sendButton.type = 'submit';
     const arrow = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5m-6 6 6-6 6 6"/></svg>';
     composer.append(input, sendButton);
-    footer.append(status, composer, el('p', 'xoul-chat-note', 'XOUL · 本地演示，尚未连接模型'));
+    footer.append(status, composer, el('p', 'xoul-chat-note', 'XOUL · 优先基于产品知识回答'));
     host.replaceChildren(list, footer);
     let busy = false, controller, activeForm;
     const messages = [];
@@ -44,8 +44,8 @@
       list.querySelectorAll('.guide-card').forEach(button => button.disabled = busy);
     }
     function persist() { onChange(messages.map(m => ({ ...m }))); }
-    function add(role, text, sources = []) {
-      const message = { role, text, sources: Array.isArray(sources) ? sources : [{ title: String(sources) }] };
+    function add(role, text, sources = [], images = []) {
+      const message = { role, text, sources: Array.isArray(sources) ? sources : [{ title: String(sources) }], images: Array.isArray(images) ? images : [] };
       messages.push(message);
       const row = el('article', 'xoul-chat-message ' + (role === 'user' ? 'user' : 'assistant'));
       if (role !== 'user') row.append(avatar());
@@ -53,6 +53,11 @@
       if (role !== 'user') body.append(el('span', 'message-name', entityName));
       const bubble = el('div', 'xoul-chat-bubble', text);
       body.append(bubble);
+      message.images.filter(image => image?.url).forEach(image => {
+        const photo = el('img', 'chat-knowledge-image'); photo.src = image.url; photo.alt = image.title || '知识库图片';
+        photo.onerror = () => photo.remove();
+        body.append(photo);
+      });
       row.append(body); list.append(row);
       function showSources(items) {
         body.querySelector('.xoul-chat-sources')?.remove();
@@ -73,6 +78,13 @@
         persist(); list.scrollTop = list.scrollHeight;
       }};
     }
+    function knowledgeImagesFor(text) {
+      const entries = config.knowledge?.entries || [];
+      if (!/(图片|图示|示意|看图|展示|外观|长什么样|照片)/i.test(text)) return [];
+      const withImages = entries.filter(entry => entry?.image);
+      const matched = withImages.filter(entry => entry.title && text.includes(entry.title));
+      return (matched.length ? matched : withImages).slice(0, 3).map(entry => ({ url: entry.image, title: entry.title || '知识库图片' }));
+    }
     function welcome() {
       const row = el('article', 'xoul-chat-message assistant welcome-message');
       row.append(avatar());
@@ -89,9 +101,12 @@
         : '碰到你真好。从这一刻起，你可以直接和我说话了。想了解我，或是一起做点什么？从下面选一个，也可以随意聊聊。';
       body.append(el('p', 'welcome-description', config.agent?.welcome?.trim() || fallback));
       const cards = el('div', 'message-cards');
-      (config.cards || []).filter(card => card.enabled !== false).forEach(card => {
-        const button = el('button', 'guide-card'); button.type = 'button';
-        button.append(el('span', '', card.title), el('span', '', '↗'));
+      (config.cards || []).filter(card => card.enabled !== false).forEach((card, index) => {
+        const capability = String(card.capability_id || 'custom').replace(/[^a-z0-9_-]/gi, '-');
+        const button = el('button', 'guide-card guide-card-' + capability); button.type = 'button';
+        button.dataset.index = String(index + 1).padStart(2, '0');
+        button.setAttribute('aria-label', card.title || '开始对话');
+        button.append(el('span', 'guide-card-title', card.title), el('span', 'guide-card-arrow', '↗'));
         button.addEventListener('click', () => {
           if (busy) return;
           if (card.capability_id === 'calculate_training_volume') calculator(card);
@@ -108,6 +123,8 @@
       busy = true; controller = new AbortController();
       status.textContent = '正在整理产品资料…'; status.className = 'chat-status'; controls();
       add('user', text);
+      const relatedImages = knowledgeImagesFor(text);
+      if (relatedImages.length) add('assistant', '我把相关的器械图片放在这里，你可以直接对照查看。', [], relatedImages);
       let responseView;
       try {
         if (!adapter.send) throw new Error('尚未配置对话接口');
@@ -180,7 +197,7 @@
       messages.length=0;list.replaceChildren();activeForm=null;welcome();persist();status.textContent='';input.value='';controls();return true;
     }
     welcome();
-    initialMessages.filter(m=>['user','assistant'].includes(m.role)&&typeof m.text==='string').slice(-80).forEach(m=>add(m.role,m.text,m.sources||[]));
+    initialMessages.filter(m=>['user','assistant'].includes(m.role)&&typeof m.text==='string').slice(-80).forEach(m=>add(m.role,m.text,m.sources||[],m.images||[]));
     controls();
     return { send, add, reset, get busy(){return busy;}, get messages(){return messages.slice();} };
   }

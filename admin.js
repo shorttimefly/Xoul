@@ -43,7 +43,7 @@
     const p=clone(product);p.agent={...seed.agent,...p.agent};p.model={...seed.model,...p.model};
     p.prompt=p.prompt||'';
     p.workflow_options={...seed.workflow_options,...p.workflow_options};
-    p.knowledge=p.knowledge||[];p.cards=p.cards||[];p.workflow=p.workflow||[];
+    p.extra_fields=Array.isArray(p.extra_fields)?p.extra_fields:[];p.knowledge=p.knowledge||[];p.cards=p.cards||[];p.workflow=p.workflow||[];
     return p;
   }
   function mark(){dirty=true;$('dirtyHint').textContent='有未保存的修改';$('saveState').textContent='未保存';stats();}
@@ -69,6 +69,17 @@
       button.append(name,el('small','',p.id));button.onclick=()=>select(p.id);$('productList').append(button);
     });
     if(!$('productList').childElementCount)$('productList').append(el('p','empty','没有匹配的产品'));
+  }
+  function renderExtraFields(){
+    const box=$('extraFieldsList');if(!box)return;box.replaceChildren();
+    current.extra_fields.forEach((item,i)=>{
+      const row=el('div','extra-field-item');
+      const key=el('input');key.value=item.key||'';key.placeholder='key（例如：训练重点）';key.setAttribute('aria-label','扩展字段名称 '+(i+1));
+      const value=el('input');value.value=item.value??'';value.placeholder='value（例如：下肢力量）';value.setAttribute('aria-label','扩展字段值 '+(i+1));
+      key.oninput=()=>{item.key=key.value;mark();};value.oninput=()=>{item.value=value.value;mark();};
+      row.append(key,value,removeButton('删除扩展字段 '+(i+1),()=>{current.extra_fields.splice(i,1);renderExtraFields();mark();}));box.append(row);
+    });
+    if(!box.childElementCount)box.append(el('div','empty extra-fields-empty','还没有扩展字段。需要补充时，按 key / value 添加即可。'));
   }
   function tab(index){
     activeTab=index;panels.forEach((p,i)=>p.hidden=i!==index);
@@ -108,7 +119,7 @@
       if(result.status==='queued'||result.status==='processing')understandingTimer=setTimeout(refreshImageUnderstanding,1800);
     }).catch(()=>{imageUnderstanding.hidden=true;});
   }
-  panels[4].querySelector('.panel-title p').textContent='按顺序编排步骤，可调整先后；执行引擎待接入';
+  panels[4].querySelector('.panel-title p').textContent='配置可用步骤；模型会根据用户问题灵活选择，不必机械执行全部步骤';
   panels[5].querySelector('h3').textContent='对话引导卡片';
   panels[5].querySelector('.panel-title p').textContent='显示在助手欢迎消息内，点击即可开始';
   $('modelApiKey').placeholder='本地演示，请勿输入真实密钥';
@@ -137,7 +148,7 @@
     refreshImageUnderstanding();
     $('statusText').textContent=current.enabled?'入口已启用':'入口已停用';$('productStatus').classList.toggle('off',!current.enabled);
     $('toggleStatus').textContent=current.enabled?'停用入口':'启用入口';
-    renderKnowledge();renderWorkflow();renderCards();stats();tab(activeTab);
+    renderExtraFields();renderKnowledge();renderWorkflow();renderCards();stats();tab(activeTab);
   }
   function select(id){
     if(dirty&&!confirm('当前产品还有未保存的修改。放弃修改并切换？'))return;
@@ -157,7 +168,9 @@
     const box=$('knowledgeList');box.replaceChildren();
     current.knowledge.forEach((k,i)=>{
       const item=el('div','knowledge-item'),fields=el('div');
+      if(k.image){const preview=el('img','knowledge-image-preview');preview.src=k.image;preview.alt=k.title||'知识库图片';fields.append(preview);}
       fields.append(field('条目名称',k.title,v=>k.title=v),field('知识内容',k.body,v=>k.body=v,'textarea'));
+      if(k.source)fields.append(el('small','field-hint','来源：'+k.source));
       item.append(fields,removeButton('删除知识条目 '+(i+1),()=>{current.knowledge.splice(i,1);renderKnowledge();mark();}));box.append(item);
     });
     if(!box.childElementCount)box.append(el('div','empty','还没有知识条目。添加产品说明、使用方法或常见问题。'));
@@ -213,12 +226,32 @@
     persist();activeTab=0;fill();$('productSearch').value='';renderProducts();$('productName').focus();notice('产品已创建。填写产品身份后添加知识与对话卡片。');
   };
   $('addKnowledge').onclick=()=>{current.knowledge.push({title:'新知识条目',body:''});renderKnowledge();mark();};
+  $('addExtraField').onclick=()=>{current.extra_fields.push({key:'',value:''});renderExtraFields();mark();};
+  $('importKnowledge').onclick=()=>$('knowledgeFile').click();
+  $('knowledgeFile').addEventListener('change',async event=>{
+    const file=event.target.files?.[0];event.target.value='';if(!file)return;
+    const isMarkdown=/\.md$/i.test(file.name)||file.type==='text/markdown',isImage=['image/png','image/jpeg','image/webp'].includes(file.type);
+    if(!isMarkdown&&!isImage){notice('请选择 Markdown（.md）、PNG、JPG 或 WebP 文件。');return;}
+    if(file.size>2*1024*1024){notice('Markdown 文件请控制在 2MB 以内。');return;}
+    try{
+      if(isMarkdown){
+        const body=await file.text();if(!body.trim()){notice('这个 Markdown 文件没有可导入的内容。');return;}
+        current.knowledge.push({title:file.name.replace(/\.md$/i,''),body,source:'Markdown 文件'});
+      }else{
+        const url=URL.createObjectURL(file),photo=new Image();photo.src=url;await photo.decode();
+        const scale=Math.min(1,1200/Math.max(photo.naturalWidth,photo.naturalHeight)),canvas=document.createElement('canvas');
+        canvas.width=Math.max(1,Math.round(photo.naturalWidth*scale));canvas.height=Math.max(1,Math.round(photo.naturalHeight*scale));canvas.getContext('2d').drawImage(photo,0,0,canvas.width,canvas.height);URL.revokeObjectURL(url);
+        current.knowledge.push({title:file.name.replace(/\.[^.]+$/,''),body:'知识库图片：请在对话中参考这张图片。',image:canvas.toDataURL('image/webp',0.82),source:'图片文件'});
+      }
+      renderKnowledge();mark();notice('已导入「'+file.name+'」，保存产品配置后会带入 C 端上下文。');
+    }catch(_){notice('Markdown 文件读取失败，请重试。');}
+  });
   $('addStep').onclick=()=>{current.workflow.push('retrieve_knowledge');renderWorkflow();mark();};
   $('addCard').onclick=()=>{current.cards.push({title:'新功能卡片',prompt:'',capability:'custom'});renderCards();mark();};
   $('toggleStatus').onclick=()=>{current.enabled=!current.enabled;mark();fill();notice('入口状态已修改，保存后生效。');};
   $('openExperience').onclick=()=>{
     if(dirty){notice('请先保存修改，再预览最新体验。');return;}
-    window.open('/public.html?entrypoint='+encodeURIComponent(current.slug),'_blank','noopener');
+    window.open('public.html?entrypoint='+encodeURIComponent(current.slug),'_blank','noopener');
   };
   $('productSearch').oninput=renderProducts;
   $('productImage').addEventListener('change',async event=>{

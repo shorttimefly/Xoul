@@ -38,6 +38,43 @@ class OpenAICompatTests(unittest.TestCase):
         messages = build_messages({}, {}, [], [], '怎么用？', {'name': '产品', 'image_understanding': {'status': 'ready', 'raw_text': '这是用户修订后的识别说明。'}})
         self.assertIn('用户修订后的识别说明', messages[0]['content'])
 
+    def test_build_messages_includes_product_extra_fields(self):
+        messages = build_messages(
+            {}, {}, [], [], '怎么用？',
+            {'name': '产品', 'extra_fields': [
+                {'key': '训练重点', 'value': '下肢力量'},
+                {'key': '使用限制', 'value': '仅限室内平整地面'},
+            ]},
+        )
+        self.assertIn('产品扩展字段', messages[0]['content'])
+        self.assertIn('训练重点：下肢力量', messages[0]['content'])
+        self.assertIn('使用限制：仅限室内平整地面', messages[0]['content'])
+
+    def test_build_messages_keeps_knowledge_image_out_of_model_context(self):
+        messages = build_messages(
+            {}, {}, [{'title': '器械示意图', 'content': '动作示意', 'image': 'data:image/webp;base64,abc'}],
+            [], '这张图说明什么？', {'name': '产品'},
+        )
+        self.assertIsInstance(messages[0]['content'], str)
+        self.assertNotIn('image_url', messages[0]['content'])
+        self.assertIn('器械示意图', messages[0]['content'])
+        self.assertIn('动作示意', messages[0]['content'])
+
+    def test_build_messages_applies_open_workflow_and_knowledge_boundary(self):
+        messages = build_messages(
+            {}, {}, [{'title': '安全', 'content': '先检查安全销'}], [], '怎么开始？',
+            {'name': '深蹲架', 'workflow': ['load_product_context', 'retrieve_knowledge', 'generate_answer']},
+        )
+        prompt = messages[0]['content']
+        self.assertIn('开放式工作流', prompt)
+        self.assertIn('retrieve_knowledge', prompt)
+        self.assertIn('优先使用产品知识', prompt)
+        self.assertIn('不要补充未经知识库支持的外部事实', prompt)
+
+    def test_build_messages_accepts_chat_ui_text_history(self):
+        messages = build_messages({}, {}, [], [{'role': 'user', 'text': '上一轮问题'}], '当前问题', {'name': '产品'})
+        self.assertEqual(messages[1], {'role': 'user', 'content': '上一轮问题'})
+
     def test_vision_prompt_requests_structured_entity_expansion(self):
         messages = build_vision_messages('data:image/webp;base64,abc')
         self.assertEqual(messages[0]['role'], 'system')
@@ -48,6 +85,14 @@ class OpenAICompatTests(unittest.TestCase):
     def test_catalog_sync_does_not_erase_existing_secret_when_stale_browser_is_blank(self):
         merged = merge_catalog({'models': [{'id': 'm1', 'name': 'demo', 'api_key': ''}]}, {'models': [{'id': 'm1', 'api_key': 'secret'}]})
         self.assertEqual(merged['models'][0]['api_key'], 'secret')
+
+    def test_catalog_sync_does_not_erase_existing_connection_when_stale_browser_is_blank(self):
+        merged = merge_catalog(
+            {'models': [{'id': 'm1', 'name': 'demo', 'base_url': '', 'model': ''}]},
+            {'models': [{'id': 'm1', 'base_url': 'https://gateway.example/v1', 'model': 'gpt-5.6'}]},
+        )
+        self.assertEqual(merged['models'][0]['base_url'], 'https://gateway.example/v1')
+        self.assertEqual(merged['models'][0]['model'], 'gpt-5.6')
 
     def test_image_understanding_saves_structured_expansion(self):
         class Vision(BaseHTTPRequestHandler):
@@ -72,6 +117,11 @@ class OpenAICompatTests(unittest.TestCase):
         safe = redact_profile({'name': 'demo', 'api_key': 'secret'})
         self.assertNotIn('api_key', safe)
         self.assertEqual(safe['name'], 'demo')
+
+    def test_public_model_is_configured_only_when_endpoint_model_and_key_exist(self):
+        product = {'id': 'p1', 'name': 'P1', 'enabled': True, 'model_profile_id': 'm1'}
+        payload = server.public_product(product, {'models': [{'id': 'm1', 'base_url': '', 'model': '', 'api_key': 'secret'}]})
+        self.assertFalse(payload['model']['configured'])
 
     def test_local_chat_proxies_openai_sse_and_keeps_key_private(self):
         received = {}
