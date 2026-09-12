@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>XOUL Console</title><link rel="stylesheet" href="admin.css"></head>
 <body>
-<header class="topbar"><a class="brand" href="/">XOUL <span>STUDIO</span></a><div class="top-actions"><span class="local-badge">本地工作区</span><span class="saved" id="saveState" role="status">本地已保存</span><button class="ghost" id="openExperience">预览体验 ↗</button></div></header>
+<header class="topbar"><a class="brand" href="/">XOUL <span>STUDIO</span></a><div class="top-actions"><a class="ghost" href="/catalog.html">类型与模型</a><span class="local-badge">本地工作区</span><span class="saved" id="saveState" role="status">本地已保存</span><button class="ghost" id="openExperience">预览体验 ↗</button></div></header>
 <main class="shell">
 <aside class="sidebar"><div class="side-head"><div><small>YOUR ENTITIES</small><h1>我的产品</h1></div><button class="add" id="newProduct" aria-label="创建产品">＋</button></div><label class="search-label"><span>搜索产品</span><input id="productSearch" type="search" placeholder="名称或产品 ID"></label><div id="productList" class="product-list"></div><div class="side-note"><span class="side-orbit">◎</span><strong>让每件产品，都能对话。</strong><p>配置一次，通过产品入口连接每一位用户。</p></div></aside>
 <section class="content"><div class="page-head"><div><p class="eyebrow">PRODUCT EXPERIENCE</p><h2 id="pageTitle">产品配置</h2><p class="muted">配置身份、知识和 Agent，碰一碰即可进入。</p></div><div class="status-wrap"><span id="productStatus" class="status-dot"></span><span id="statusText">已启用</span><button class="text-btn" id="toggleStatus">停用入口</button></div></div>

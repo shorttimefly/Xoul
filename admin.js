@@ -1,6 +1,7 @@
 (function () {
   'use strict';
   const KEY='xoul.local.products.v1';
+  const CATALOG_KEY='xoul.local.catalog.v1';
   const seed={id:'prod_fitness_318',name:'深蹲训练器 318',type:'fitness_equipment',intro:'你的专属训练助手，帮助你安全完成每一次训练。',enabled:true,slug:'fitness-machine-318',knowledge:[{title:'动作说明',body:'双脚与肩同宽，保持背部中立，缓慢下蹲至大腿平行，再用脚跟发力站起。'}],agent:{name:'健身指导 Agent',tone:'专业、友好',role:'你是专业的健身教练，帮助用户安全完成训练。',rules:'优先引用产品知识；涉及安全时提醒用户量力而行。',memory:true},model:{provider:'OpenAI-compatible',name:'gpt-5.5',base_url:'',api_key:'',temperature:0.3,max_tokens:2048,streaming:true},workflow:['load_product_context','retrieve_knowledge','classify_intent','run_capability','generate_answer'],workflow_options:{max_iterations:3,failure_policy:'stop'},cards:[{title:'怎么做这个动作？',prompt:'请告诉我这个动作的正确做法。',capability:'explain_exercise'},{title:'主要锻炼哪些肌肉？',prompt:'这个动作主要锻炼哪些肌肉？',capability:'identify_muscles'},{title:'帮我算今天训练量',prompt:'帮我计算今天的训练量。',capability:'calculate_training_volume'},{title:'安全注意事项',prompt:'这个动作有哪些安全注意事项？',capability:'check_safety_notes'}]};
   const $=id=>document.getElementById(id), clone=x=>JSON.parse(JSON.stringify(x));
   const stepNames={load_product_context:'加载产品上下文',retrieve_knowledge:'检索知识库',classify_intent:'识别用户意图',run_capability:'调用产品能力',generate_answer:'生成回答',write_memory:'记录重要记忆'};
@@ -21,6 +22,17 @@
     if(!raw){localStorage.setItem(KEY,JSON.stringify([seed]));return [clone(seed)];}
     const data=JSON.parse(raw);if(!Array.isArray(data)||!data.length)throw new Error('产品数据格式无效');
     return data;
+  }
+  function catalog(){try{return JSON.parse(localStorage.getItem(CATALOG_KEY))||{types:[],models:[]};}catch(_){return {types:[],models:[]};}}
+  function populateSharedCatalog(){
+    const shared=catalog(), type=$('productType');
+    if(shared.types.length){type.replaceChildren(...shared.types.map(x=>new Option(x.name,x.id)));}
+    const anchor=$('modelProvider')?.parentElement;
+    if(anchor && shared.models.length && !$('modelProfile')){
+      const label=el('label','','公共模型配置');const select=el('select');select.id='modelProfile';
+      shared.models.forEach(x=>select.add(new Option(x.name,x.id)));select.value=current?.model_profile_id||shared.models[0].id;
+      select.onchange=()=>{current.model_profile_id=select.value;const profile=shared.models.find(x=>x.id===select.value);if(profile){current.model={...current.model,provider:profile.provider||'',base_url:profile.base_url||'',name:profile.model||''};fill();}mark();};label.append(select);anchor.parentElement.prepend(label);
+    }
   }
   function normalize(product){
     const p=clone(product);p.agent={...seed.agent,...p.agent};p.model={...seed.model,...p.model};
@@ -65,6 +77,7 @@
     $('configTabs').append(button);
   });
   $('configTabs').setAttribute('role','tablist');
+  populateSharedCatalog();
   panels[3].querySelector('.panel-title p').textContent='设置模型参数；当前页面仅保存配置';
   const modelHint=el('p','panel-hint','模型服务尚未连接。当前是本机演示配置，请勿填写真实 API Key。');
   panels[3].querySelector('.panel-title').after(modelHint);
