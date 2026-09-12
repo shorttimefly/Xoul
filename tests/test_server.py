@@ -4,10 +4,14 @@ import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import server
-from server import build_messages, build_vision_messages, extract_delta, image_hash, merge_catalog, normalize_chat_url, redact_profile, run_image_understanding
+from server import build_messages, build_vision_messages, extract_delta, image_hash, merge_catalog, normalize_chat_url, redact_profile, run_image_understanding, sync_products
 
 
 class OpenAICompatTests(unittest.TestCase):
+    def test_sync_without_products_preserves_existing_products(self):
+        existing = [{'id': 'p1', 'slug': 'one'}]
+        self.assertEqual(sync_products({}, existing), existing)
+        self.assertEqual(sync_products({'products': []}, existing), [])
     def test_url_normalization_accepts_common_base_forms(self):
         self.assertEqual(normalize_chat_url('https://api.example.com'), 'https://api.example.com/v1/chat/completions')
         self.assertEqual(normalize_chat_url('https://api.example.com/v1/'), 'https://api.example.com/v1/chat/completions')

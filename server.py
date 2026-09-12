@@ -167,6 +167,11 @@ def merge_catalog(incoming, existing):
     return result
 
 
+def sync_products(body, existing):
+    """Keep existing products when a catalog-only client omits products."""
+    return body["products"] if isinstance(body, dict) and "products" in body and isinstance(body["products"], list) else existing
+
+
 def parse_json_object(text):
     value = str(text or "").strip().replace("```json", "").replace("```", "").strip()
     try:
@@ -275,7 +280,7 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, OSError):
             return self.send_json(400, {"error": {"code": "INVALID_JSON", "message": "请求格式无效"}})
         if path == "/api/v1/admin/sync":
-            previous = load_store(); products = body.get("products", []); catalog = merge_catalog(body.get("catalog", {}), previous.get("catalog", {})); save_store({"products": products, "catalog": catalog}); queue_image_understanding(products)
+            previous = load_store(); products = sync_products(body, previous.get("products", [])); catalog = merge_catalog(body.get("catalog", {}), previous.get("catalog", {})); save_store({"products": products, "catalog": catalog}); queue_image_understanding(products)
             return self.send_json(200, {"ok": True})
         match = re.fullmatch(r"/api/v1/admin/products/([^/]+)/image-understanding", path)
         if match:

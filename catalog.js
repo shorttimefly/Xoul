@@ -32,7 +32,7 @@
   function sync() {
     fetch(window.XoulApiBase() + '/api/v1/admin/sync', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ catalog: data, products: JSON.parse(localStorage.getItem('xoul.local.products.v1') || '[]') })
+      body: JSON.stringify({ catalog: data })
     }).catch(() => {});
   }
   function persist(message) {
