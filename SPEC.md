@@ -73,7 +73,9 @@ PATCH /api/v1/admin/products/{product_id}
 ```text
 /             XOUL 首页
 /admin        管理端（映射到 admin.html）
-/catalog      公共类型与模型配置（映射到 catalog.html）
+/catalog      公共配置中心
+/types        产品类型配置（映射到 types.html）
+/models       模型接入配置（映射到 models.html）
 /e/{slug}     产品 C 端 Chat 体验（映射到 public.html）
 /api/...      本地 API 服务（反向代理到 127.0.0.1:8780）
 ```
