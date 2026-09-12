@@ -34,6 +34,10 @@ class OpenAICompatTests(unittest.TestCase):
         self.assertIn('产品自己的陪练人格', messages[0]['content'])
         self.assertEqual(messages[-1], {'role': 'user', 'content': '现在怎么做？'})
 
+    def test_edited_image_understanding_text_overrides_structured_result(self):
+        messages = build_messages({}, {}, [], [], '怎么用？', {'name': '产品', 'image_understanding': {'status': 'ready', 'raw_text': '这是用户修订后的识别说明。'}})
+        self.assertIn('用户修订后的识别说明', messages[0]['content'])
+
     def test_vision_prompt_requests_structured_entity_expansion(self):
         messages = build_vision_messages('data:image/webp;base64,abc')
         self.assertEqual(messages[0]['role'], 'system')

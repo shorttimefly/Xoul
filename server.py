@@ -59,7 +59,7 @@ def build_messages(type_config, agent_config, entries, history, message, product
     understood = product.get("image_understanding") or {}
     image_context = ""
     if understood.get("status") == "ready":
-        image_context = "图片理解：\n" + json.dumps({k: understood.get(k) for k in ("subject", "scene", "use_cases", "suitable_for", "usage_method", "safety") if understood.get(k)}, ensure_ascii=False)
+        image_context = "图片理解：\n" + (understood.get("raw_text") or json.dumps({k: understood.get(k) for k in ("subject", "scene", "use_cases", "suitable_for", "usage_method", "safety") if understood.get(k)}, ensure_ascii=False))
     parts = [x for x in [
         "你是有温度的产品实体，请用第一人称与用户交流；称呼自己时使用产品名称。回答准确、自然，不要声称看到了图片之外的信息。",
         "产品名称：" + str(product.get("name", "")), "产品介绍：" + str(product.get("intro", "")),
