@@ -27,6 +27,7 @@
     status.setAttribute('role', 'status');
     const composer = el('form', 'xoul-chat-composer');
     const input = el('textarea');
+    input.id = 'chat-message'; input.name = 'message';
     input.rows = 1; input.placeholder = '有什么想对我说的？';
     input.setAttribute('aria-label', '输入问题');
     const sendButton = el('button', 'send-button');

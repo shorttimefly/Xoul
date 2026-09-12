@@ -35,6 +35,17 @@
       body: JSON.stringify({ catalog: data })
     }).catch(() => {});
   }
+  function hydrateFromServer() {
+    return fetch(window.XoulApiBase() + '/api/v1/admin/catalog').then(response => response.ok ? response.json() : null).then(remote => {
+      if (!remote || !Array.isArray(remote.types) || !Array.isArray(remote.models)) return;
+      const localModels = Object.fromEntries((data.models || []).map(item => [item.id, item]));
+      data = {
+        types: remote.types.length ? remote.types : data.types,
+        models: remote.models.length ? remote.models.map(item => ({ ...localModels[item.id], ...item, api_key: localModels[item.id]?.api_key || '' })) : data.models
+      };
+      localStorage.setItem(KEY, JSON.stringify(data)); renderList(); renderEditor();
+    }).catch(() => null);
+  }
   function persist(message) {
     localStorage.setItem(KEY, JSON.stringify(data)); sync();
     $('saveState').textContent = message || '已保存'; $('notice').textContent = message || '配置已保存'; $('notice').hidden = false;
@@ -44,6 +55,7 @@
     const wrapper = document.createElement('label'); if (wide) wrapper.className = 'wide'; wrapper.textContent = label;
     const input = document.createElement(type === 'textarea' ? 'textarea' : 'input'); input.name = key; input.value = value ?? '';
     if (type !== 'textarea') input.autocomplete = key === 'api_key' ? 'new-password' : 'off';
+    if (key === 'api_key' && value === '') input.placeholder = '留空则保持已配置密钥';
     if (type !== 'textarea') input.type = type || 'text'; else input.rows = 4;
     wrapper.append(input); return wrapper;
   }
@@ -111,5 +123,5 @@
     persist('已保存' + config.singular); renderList(); renderEditor();
   };
   $('cancelButton').onclick = () => { selectedId = null; renderList(); renderEditor(); };
-  sync(); renderList();
+  renderList(); hydrateFromServer();
 })();

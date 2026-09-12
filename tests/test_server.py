@@ -4,7 +4,7 @@ import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import server
-from server import build_messages, build_vision_messages, extract_delta, image_hash, merge_catalog, normalize_chat_url, redact_profile, run_image_understanding, sync_products
+from server import admin_catalog, build_messages, build_vision_messages, extract_delta, image_hash, merge_catalog, normalize_chat_url, redact_profile, run_image_understanding, sync_products
 
 
 class OpenAICompatTests(unittest.TestCase):
@@ -73,6 +73,8 @@ class OpenAICompatTests(unittest.TestCase):
         self.assertIn('开放式工作流', prompt)
         self.assertIn('retrieve_knowledge', prompt)
         self.assertIn('优先使用产品知识', prompt)
+        self.assertIn('只回答与当前产品直接相关', prompt)
+        self.assertIn('不得主动推荐其他器械', prompt)
         self.assertIn('不要补充未经知识库支持的外部事实', prompt)
 
     def test_build_messages_accepts_chat_ui_text_history(self):
@@ -103,7 +105,7 @@ class OpenAICompatTests(unittest.TestCase):
             def do_POST(self):
                 self.rfile.read(int(self.headers['Content-Length']))
                 self.send_response(200); self.send_header('Content-Type', 'application/json'); self.end_headers()
-                content = json.dumps({'subject': '深蹲训练器', 'scene': '健身房', 'use_cases': ['腿部训练'], 'suitable_for': ['健身初学者'], 'usage_method': '站稳后缓慢下蹲', 'safety': '量力而行'})
+                content = json.dumps({'subject': '深蹲训练器', 'scene': '健身房', 'use_cases': ['腿部训练'], 'suitable_for': ['健身初学者'], 'usage_method': '站稳后缓慢下蹲', 'safety': '量力而行', 'product_prompt': '你是深蹲训练器，陪用户安全完成力量训练。'})
                 self.wfile.write(json.dumps({'choices': [{'message': {'content': content}}]}).encode())
             def log_message(self, *_): pass
         upstream = ThreadingHTTPServer(('127.0.0.1', 0), Vision); threading.Thread(target=upstream.serve_forever, daemon=True).start()
@@ -111,7 +113,7 @@ class OpenAICompatTests(unittest.TestCase):
         server.save_store({'products': [{'id': 'p1', 'image': image, 'model_profile_id': 'm1'}], 'catalog': {'models': [{'id': 'm1', 'base_url': 'http://127.0.0.1:%d' % upstream.server_address[1], 'model': 'vision', 'api_key': 'secret'}]}})
         try:
             run_image_understanding('p1', image_hash(image)); result = server.load_store()['products'][0]['image_understanding']
-            self.assertEqual(result['status'], 'ready'); self.assertEqual(result['subject'], '深蹲训练器'); self.assertIn('健身初学者', result['suitable_for'])
+            self.assertEqual(result['status'], 'ready'); self.assertEqual(result['subject'], '深蹲训练器'); self.assertIn('健身初学者', result['suitable_for']); self.assertEqual(result['product_prompt'], '你是深蹲训练器，陪用户安全完成力量训练。'); self.assertEqual(server.load_store()['products'][0]['prompt'], result['product_prompt'])
         finally:
             upstream.shutdown(); upstream.server_close(); server.STORE = original
             try: (server.ROOT / '.test-xoul.local.json').unlink()
@@ -121,6 +123,12 @@ class OpenAICompatTests(unittest.TestCase):
         safe = redact_profile({'name': 'demo', 'api_key': 'secret'})
         self.assertNotIn('api_key', safe)
         self.assertEqual(safe['name'], 'demo')
+
+    def test_admin_catalog_exposes_connection_metadata_without_credentials(self):
+        safe = admin_catalog({'models': [{'id': 'm1', 'base_url': 'https://gateway.example/v1', 'model': 'gpt-5.6', 'api_key': 'secret'}]})
+        self.assertEqual(safe['models'][0]['model'], 'gpt-5.6')
+        self.assertTrue(safe['models'][0]['api_key_configured'])
+        self.assertNotIn('api_key', safe['models'][0])
 
     def test_public_model_is_configured_only_when_endpoint_model_and_key_exist(self):
         product = {'id': 'p1', 'name': 'P1', 'enabled': True, 'model_profile_id': 'm1'}

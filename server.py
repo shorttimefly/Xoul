@@ -70,7 +70,7 @@ def build_messages(type_config, agent_config, entries, history, message, product
     understood = product.get("image_understanding") or {}
     image_context = ""
     if understood.get("status") == "ready":
-        image_context = "图片理解：\n" + (understood.get("raw_text") or json.dumps({k: understood.get(k) for k in ("subject", "scene", "use_cases", "suitable_for", "usage_method", "safety") if understood.get(k)}, ensure_ascii=False))
+        image_context = "图片理解：\n" + (understood.get("raw_text") or json.dumps({k: understood.get(k) for k in ("subject", "scene", "use_cases", "suitable_for", "usage_method", "safety", "product_prompt") if understood.get(k)}, ensure_ascii=False))
     extra_fields = []
     for field in product.get("extra_fields") or []:
         if not isinstance(field, dict):
@@ -82,7 +82,7 @@ def build_messages(type_config, agent_config, entries, history, message, product
     workflow = product.get("workflow") or []
     workflow_steps = [step.get("type") if isinstance(step, dict) else step for step in workflow]
     workflow_context = "开放式工作流：根据用户问题选择必要的步骤和知识内容，不必机械执行全部步骤；可用步骤：" + json.dumps(workflow_steps, ensure_ascii=False) if workflow_steps else ""
-    knowledge_boundary = "知识边界：优先使用产品知识、图片理解结果和扩展字段；知识库没有覆盖时明确说明不确定，不要补充未经知识库支持的外部事实，不主动引入外网信息。"
+    knowledge_boundary = "知识边界：只回答与当前产品直接相关的问题。优先使用产品知识、图片理解结果和扩展字段；即使知识库包含其他产品或通用内容，也不得把它们当作当前产品能力，不得主动推荐其他器械、外部训练方案或外网事实。知识库没有覆盖时明确说明不确定，不要补充未经知识库支持的外部事实，不主动引入外网信息。"
     parts = [x for x in [
         "你是有温度的产品实体，请用第一人称与用户交流；称呼自己时使用产品名称。回答准确、自然，不要声称看到了图片之外的信息。",
         "产品名称：" + str(product.get("name", "")), "产品介绍：" + str(product.get("intro", "")),
@@ -100,7 +100,7 @@ def build_messages(type_config, agent_config, entries, history, message, product
 
 
 def build_vision_messages(image):
-    return [{"role": "system", "content": "你是产品图像理解助手。请识别图片主体并结合场景扩写，严格返回 JSON，字段包括 subject（主体）、scene（场景）、use_cases（使用场景数组）、suitable_for（适用人群数组）、usage_method（使用方法）、safety（安全提示）。无法确认的内容请写空数组或空字符串，不要臆测品牌和型号。"}, {"role": "user", "content": [{"type": "text", "text": "请理解这张产品图片并按要求返回 JSON。"}, {"type": "image_url", "image_url": {"url": image}}]}]
+    return [{"role": "system", "content": "你是产品图像理解助手。请识别图片主体并结合场景扩写，严格返回 JSON，字段包括 subject（主体）、scene（场景）、use_cases（使用场景数组）、suitable_for（适用人群数组）、usage_method（使用方法）、safety（安全提示）、product_prompt（给这个产品使用的第一人称产品 Prompt）。product_prompt 要描述产品身份、可提供的帮助和安全边界；无法确认的内容请写空数组或空字符串，不要臆测品牌、型号、承重等精确参数。"}, {"role": "user", "content": [{"type": "text", "text": "请理解这张产品图片并按要求返回 JSON。"}, {"type": "image_url", "image_url": {"url": image}}]}]
 
 
 def image_hash(image):
@@ -148,6 +148,19 @@ def public_product(product, catalog):
         "cards": [{"id": x.get("id", "card_%d" % i), "title": x.get("title", ""), "prompt": x.get("prompt", ""), "enabled": x.get("enabled", True), "capability_id": x.get("capability", "custom")} for i, x in enumerate(product.get("cards", []))],
         "model": {"id": model_id, "name": model.get("name") or (product.get("model") or {}).get("name", ""), "provider": model.get("provider") or (product.get("model") or {}).get("provider", ""), "configured": bool((model.get("base_url") or (product.get("model") or {}).get("base_url")) and (model.get("model") or model.get("name") or (product.get("model") or {}).get("name")) and (model.get("api_key") or (product.get("model") or {}).get("api_key")))},
     }
+
+
+def admin_catalog(catalog):
+    """Return editable catalog metadata without exposing stored credentials."""
+    result = {"types": list(catalog.get("types", [])), "models": []}
+    for profile in catalog.get("models", []):
+        safe = dict(profile)
+        safe["api_key_configured"] = bool(profile.get("api_key"))
+        safe.pop("api_key", None)
+        for key in ("token", "secret"):
+            safe.pop(key, None)
+        result["models"].append(safe)
+    return result
 
 
 def find_product(slug, store):
@@ -202,7 +215,7 @@ def run_image_understanding(product_id, expected_hash):
             response = urllib.request.urlopen(request, timeout=120); data = json.loads(response.read().decode("utf-8")); response.close()
             choices = data.get("choices") or []; message = choices[0].get("message", {}) if choices else {}; content = message.get("content", "") if isinstance(message, dict) else ""
             understood = parse_json_object(content)
-            result = ({"status": "ready", "image_hash": expected_hash, **{key: understood.get(key) for key in ("subject", "scene", "use_cases", "suitable_for", "usage_method", "safety")}} if understood else {"status": "failed", "image_hash": expected_hash, "error": "模型返回的图片理解结果不是有效 JSON。"})
+            result = ({"status": "ready", "image_hash": expected_hash, **{key: understood.get(key) for key in ("subject", "scene", "use_cases", "suitable_for", "usage_method", "safety", "product_prompt")}} if understood else {"status": "failed", "image_hash": expected_hash, "error": "模型返回的图片理解结果不是有效 JSON。"})
     except urllib.error.HTTPError as error:
         result = {"status": "failed", "image_hash": expected_hash, "error": "图片理解模型返回 HTTP %d。" % error.code}
     except (urllib.error.URLError, TimeoutError, ValueError, OSError) as error:
@@ -211,6 +224,8 @@ def run_image_understanding(product_id, expected_hash):
     for item in products:
         if item.get("id") == product_id and image_hash(item.get("image", "")) == expected_hash:
             item["image_understanding"] = result
+            if result.get("product_prompt") and not str(item.get("prompt") or "").strip():
+                item["prompt"] = result["product_prompt"]
     save_store(store)
     IMAGE_JOBS.discard((product_id, expected_hash))
 
@@ -265,6 +280,10 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == "/api/v1/health":
             return self.send_json(200, {"ok": True, "service": "xoul-local-api"})
+        if path == "/api/v1/admin/catalog":
+            return self.send_json(200, admin_catalog(load_store().get("catalog", {})))
+        if path == "/api/v1/admin/products":
+            return self.send_json(200, {"products": load_store().get("products", [])})
         match = re.fullmatch(r"/api/v1/public/entrypoints/(.+)", path)
         if match:
             store = load_store(); product = find_product(unquote(match.group(1)), store)

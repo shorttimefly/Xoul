@@ -15,6 +15,7 @@
     workflowMaxIterations:['workflow_options','max_iterations'],workflowFailurePolicy:['workflow_options','failure_policy']
   };
   function el(tag,cls,text){const n=document.createElement(tag);if(cls)n.className=cls;if(text!==undefined)n.textContent=text;return n;}
+  function productExperienceUrl(){const slug=encodeURIComponent(current?.slug||'');return /^https?:$/.test(location.protocol)?location.origin+'/e/'+slug:new URL('public.html?entrypoint='+slug,location.href).href;}
   function load(){
     const raw=localStorage.getItem(KEY);
     if(!raw){localStorage.setItem(KEY,JSON.stringify([seed]));return [clone(seed)];}
@@ -25,13 +26,21 @@
     const defaults={types:[{id:'fitness_equipment',name:'健身器材',prompt:'你是懂训练与安全的健身器材伙伴。',image:''},{id:'consumer_product',name:'消费产品',prompt:'你是温和、可靠的产品伙伴。',image:''}],models:[{id:'default_local',name:'本地演示模型',provider:'OpenAI-compatible',base_url:'',model:'',temperature:.3,max_tokens:2048,api_key:''}]};
     try{const value=JSON.parse(localStorage.getItem(CATALOG_KEY));if(value?.types?.length&&value?.models?.length)return value;localStorage.setItem(CATALOG_KEY,JSON.stringify(defaults));return defaults;}catch(_){return defaults;}
   }
-  function syncBackend(products){fetch(window.XoulApiBase()+'/api/v1/admin/sync',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({products,catalog:catalog()})}).catch(()=>{});}
+  function syncBackend(products){return fetch(window.XoulApiBase()+'/api/v1/admin/sync',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({products,catalog:catalog()})}).catch(()=>null);}
   function populateSharedCatalog(){
     const shared=catalog(), type=$('productType');
     if(shared.types.length){type.replaceChildren(...shared.types.map(x=>new Option(x.name,x.id)));}
     const select=$('modelProfile'); if(!select)return;
     select.replaceChildren(...shared.models.map(x=>{const option=new Option(x.name+(x.enabled===false?'（已停用）':''),x.id);option.disabled=x.enabled===false;return option;}));
     select.onchange=()=>{current.model_profile_id=select.value;current.model={};renderModelSummary();mark();};
+  }
+  function hydrateSharedCatalog(){
+    return fetch(window.XoulApiBase()+'/api/v1/admin/catalog').then(response=>response.ok?response.json():null).then(remote=>{
+      if(!remote||!Array.isArray(remote.types)||!Array.isArray(remote.models))return;
+      const local=catalog(), localModels=Object.fromEntries((local.models||[]).map(item=>[item.id,item]));
+      const merged={types:remote.types.length?remote.types:local.types,models:remote.models.length?remote.models.map(item=>({...localModels[item.id],...item,api_key:localModels[item.id]?.api_key||''})):local.models};
+      localStorage.setItem(CATALOG_KEY,JSON.stringify(merged));populateSharedCatalog();fill();
+    }).catch(()=>null);
   }
   function normalize(product){
     const p=clone(product);p.agent={...seed.agent,...p.agent};p.model={...seed.model,...p.model};
@@ -47,7 +56,7 @@
     const saved=clone(current);saved.model={};
     if(index<0)products.push(saved);else products[index]=saved;
     localStorage.setItem(KEY,JSON.stringify(products));
-    syncBackend(products);
+    syncBackend(products).then(()=>refreshImageUnderstanding());
     dirty=false;$('saveState').textContent='本地已保存';$('dirtyHint').textContent='所有修改已保存';renderProducts();stats();
   }
   function stats(){
@@ -69,8 +78,8 @@
     const box=$('extraFieldsList');if(!box)return;box.replaceChildren();
     current.extra_fields.forEach((item,i)=>{
       const row=el('div','extra-field-item');
-      const key=el('input');key.value=item.key||'';key.placeholder='key（例如：训练重点）';key.setAttribute('aria-label','扩展字段名称 '+(i+1));
-      const value=el('input');value.value=item.value??'';value.placeholder='value（例如：下肢力量）';value.setAttribute('aria-label','扩展字段值 '+(i+1));
+      const key=el('input');key.name='extra-key-'+i;key.value=item.key||'';key.placeholder='key（例如：训练重点）';key.setAttribute('aria-label','扩展字段名称 '+(i+1));
+      const value=el('input');value.name='extra-value-'+i;value.value=item.value??'';value.placeholder='value（例如：下肢力量）';value.setAttribute('aria-label','扩展字段值 '+(i+1));
       key.oninput=()=>{item.key=key.value;mark();};value.oninput=()=>{item.value=value.value;mark();};
       row.append(key,value,removeButton('删除扩展字段 '+(i+1),()=>{current.extra_fields.splice(i,1);renderExtraFields();mark();}));box.append(row);
     });
@@ -93,13 +102,16 @@
   populateSharedCatalog();
   panels[3].querySelector('.panel-title p').textContent='从公共模型库选择；产品只保存模型引用';
   const imageUnderstanding=el('div','image-understanding');imageUnderstanding.hidden=true;$('imagePreview').after(imageUnderstanding);
-  function understandingText(result){return [['主体',result.subject],['场景',result.scene],['使用场景',Array.isArray(result.use_cases)?result.use_cases.join('、'):result.use_cases],['适用人群',Array.isArray(result.suitable_for)?result.suitable_for.join('、'):result.suitable_for],['使用方法',result.usage_method],['安全提示',Array.isArray(result.safety)?result.safety.join('、'):result.safety]].filter(([,value])=>value).map(([label,value])=>label+'：'+value).join('\n');}
+  function understandingText(result){return [['主体',result.subject],['场景',result.scene],['使用场景',Array.isArray(result.use_cases)?result.use_cases.join('、'):result.use_cases],['适用人群',Array.isArray(result.suitable_for)?result.suitable_for.join('、'):result.suitable_for],['使用方法',result.usage_method],['安全提示',Array.isArray(result.safety)?result.safety.join('、'):result.safety],['产品 Prompt',result.product_prompt]].filter(([,value])=>value).map(([label,value])=>label+'：'+value).join('\n');}
   function renderImageUnderstanding(result){
     imageUnderstanding.replaceChildren();imageUnderstanding.hidden=!current?.image;if(imageUnderstanding.hidden)return;
     const heading=el('div','understanding-heading');heading.append(el('strong','', '图片理解 · '),el('span','image-understanding-status',{queued:'排队中',processing:'理解中',ready:'已完成，可修改',failed:'失败'}[result?.status]||'等待提交'));imageUnderstanding.append(heading);
     if(result?.status!=='ready'){imageUnderstanding.append(el('p','image-understanding-result',result?.error||'图片保存后会在后台生成理解结果。'));return;}
     current.image_understanding={...result,raw_text:result.raw_text||understandingText(result)};
-    const wrapper=el('label','', '识别结果（可修改）'),input=el('textarea');input.rows=8;input.value=current.image_understanding.raw_text;input.setAttribute('aria-label','图片理解识别结果');
+    if(result.product_prompt&&!String(current.prompt||'').trim()){
+      current.prompt=result.product_prompt;productPrompt.value=current.prompt;
+    }
+    const wrapper=el('label','', '识别结果（可修改）'),input=el('textarea');input.id='imageUnderstandingText';input.name='image_understanding';input.rows=8;input.value=current.image_understanding.raw_text;input.setAttribute('aria-label','图片理解识别结果');
     input.oninput=()=>{current.image_understanding.raw_text=input.value;current.image_understanding.status='ready';mark();};wrapper.append(input);
     imageUnderstanding.append(wrapper,el('p','image-understanding-result','修改后保存产品配置，这段文本会作为产品上下文参与 C 端对话。'));
   }
@@ -133,6 +145,7 @@
     });
     if($('modelProfile')){$('modelProfile').value=current.model_profile_id||'';renderModelSummary();}
     $('productId').textContent=current.id;$('entrySlug').textContent='/e/'+current.slug;
+    const productUrl=productExperienceUrl();$('productUrl').value=productUrl;$('openProductUrl').href=productUrl;
     productPrompt.value=current.prompt||'';
     const preview=$('imagePreview'), previewImg=preview.querySelector('img');
     preview.hidden=!current.image;
@@ -159,7 +172,7 @@
     $('dirtyHint').textContent='修改后保存，即可预览';fill();renderProducts();
   }
   function field(label,value,onInput,tag='input'){
-    const wrapper=el('label','',label),input=el(tag);input.value=value??'';
+    const wrapper=el('label','',label),input=el(tag);input.name=label;input.value=value??'';
     input.addEventListener('input',()=>{onInput(input.value);mark();});wrapper.append(input);return wrapper;
   }
   function removeButton(label,action){const button=el('button','remove','×');button.type='button';button.setAttribute('aria-label',label);button.onclick=action;return button;}
@@ -177,7 +190,7 @@
   function renderWorkflow(){
     const box=$('workflowList');box.replaceChildren();
     current.workflow.forEach((step,i)=>{
-      const item=el('div','workflow-item'),select=el('select');select.setAttribute('aria-label','第 '+(i+1)+' 步');
+      const item=el('div','workflow-item'),select=el('select');select.name='workflow-step-'+i;select.setAttribute('aria-label','第 '+(i+1)+' 步');
       const type=typeof step==='string'?step:step.type;
       const choices={...stepNames};if(!choices[type])choices[type]=type;
       Object.entries(choices).forEach(([value,label])=>select.add(new Option(label,value)));
@@ -198,7 +211,7 @@
     current.cards.forEach((card,i)=>{
       const item=el('div','card-item'),fields=el('div','card-fields');
       fields.append(field('卡片标题',card.title,v=>card.title=v));
-      const label=el('label','','点击后的能力'),select=el('select');
+      const label=el('label','','点击后的能力'),select=el('select');select.name='card-capability-'+i;
       const choices={...capabilityNames};if(card.capability&&!choices[card.capability])choices[card.capability]=card.capability;
       Object.entries(choices).forEach(([value,title])=>select.add(new Option(title,value)));
       select.value=card.capability||'custom';select.onchange=()=>{card.capability=select.value;mark();};label.append(select);fields.append(label);
@@ -250,8 +263,12 @@
   $('toggleStatus').onclick=()=>{current.enabled=!current.enabled;mark();fill();notice('入口状态已修改，保存后生效。');};
   $('openExperience').onclick=()=>{
     if(dirty){notice('请先保存修改，再预览最新体验。');return;}
-    const target = /^https?:$/.test(location.protocol) ? '/e/'+encodeURIComponent(current.slug) : 'public.html?entrypoint='+encodeURIComponent(current.slug);
-    window.open(target,'_blank','noopener');
+    window.open(productExperienceUrl(),'_blank','noopener');
+  };
+  $('copyProductUrl').onclick=async()=>{
+    const url=productExperienceUrl();
+    try{await navigator.clipboard.writeText(url);notice('C 端产品链接已复制，可用于 NFC 写入。');}
+    catch(_){$('productUrl').focus();$('productUrl').select();document.execCommand('copy');notice('C 端产品链接已复制，可用于 NFC 写入。');}
   };
   $('productSearch').oninput=renderProducts;
   $('productImage').addEventListener('change',async event=>{
@@ -270,11 +287,22 @@
       const canvas=document.createElement('canvas');
       canvas.width=Math.max(1,Math.round(photo.naturalWidth*scale));canvas.height=Math.max(1,Math.round(photo.naturalHeight*scale));
       canvas.getContext('2d').drawImage(photo,0,0,canvas.width,canvas.height);
-      current.image=canvas.toDataURL('image/webp',0.85);fill();mark();notice('产品图片已更新，保存后 C 端可见。');
+      current.image=canvas.toDataURL('image/webp',0.85);current.image_understanding=null;fill();mark();notice('产品图片已更新，保存后 C 端可见。');
     }catch(_){if(request===imageRequest&&current===product)notice('图片无法读取或超过 1600 万像素，请换一张图片。');}
     finally{URL.revokeObjectURL(url);if(request===imageRequest)imageLoading=false;}
   });
-  $('removeImage').onclick=()=>{imageRequest++;imageLoading=false;current.image='';$('productImage').value='';fill();mark();};
+  $('removeImage').onclick=()=>{imageRequest++;imageLoading=false;current.image='';current.image_understanding=null;$('productImage').value='';fill();mark();};
   window.addEventListener('beforeunload',event=>{if(dirty){event.preventDefault();event.returnValue='';}});
-  try{const initial=load();select(initial[0].id);syncBackend(initial.map(item=>item.id===current.id?current:item));}catch(_){notice('本地产品数据无法读取，请检查存储内容；原始数据未被覆盖。');}
+  async function boot(){
+    let initial=load(), serverHasProducts=false;
+    try{
+      const response=await fetch(window.XoulApiBase()+'/api/v1/admin/products');
+      const remote=await response.json();
+      if(response.ok&&Array.isArray(remote.products)&&remote.products.length){initial=remote.products;serverHasProducts=true;localStorage.setItem(KEY,JSON.stringify(initial));}
+    }catch(_){/* offline/local mode keeps the browser copy */}
+    select(initial[0].id);
+    if(!serverHasProducts)syncBackend(initial.map(item=>item.id===current.id?current:item));
+    hydrateSharedCatalog();
+  }
+  boot().catch(()=>notice('本地产品数据无法读取，请检查存储内容；原始数据未被覆盖。'));
 })();
