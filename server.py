@@ -6,6 +6,7 @@ Keys stay in .xoul.local.json and are never included in public responses.
 import json
 import os
 import re
+import hashlib
 import tempfile
 import threading
 import time
@@ -18,6 +19,8 @@ from urllib.parse import unquote, urlparse
 ROOT = Path(__file__).resolve().parent
 STORE = ROOT / ".xoul.local.json"
 MAX_BODY = 2 * 1024 * 1024
+STORE_LOCK = threading.RLock()
+IMAGE_JOBS = set()
 
 
 def normalize_chat_url(base_url):
@@ -48,17 +51,35 @@ def extract_delta(data):
     return content if isinstance(content, str) else ""
 
 
-def build_messages(type_config, agent_config, entries, history, message):
+def build_messages(type_config, agent_config, entries, history, message, product=None):
     type_config = type_config or {}
     agent_config = agent_config or {}
     knowledge = "\n\n".join("【%s】\n%s" % (x.get("title", "产品知识"), x.get("content", "")) for x in (entries or []) if x.get("content"))
-    parts = [x for x in [type_config.get("prompt"), agent_config.get("role"), agent_config.get("rules"), "产品知识：\n" + knowledge if knowledge else ""] if x]
+    product = product or {}
+    understood = product.get("image_understanding") or {}
+    image_context = ""
+    if understood.get("status") == "ready":
+        image_context = "图片理解：\n" + json.dumps({k: understood.get(k) for k in ("subject", "scene", "use_cases", "suitable_for", "usage_method", "safety") if understood.get(k)}, ensure_ascii=False)
+    parts = [x for x in [
+        "你是有温度的产品实体，请用第一人称与用户交流；称呼自己时使用产品名称。回答准确、自然，不要声称看到了图片之外的信息。",
+        "产品名称：" + str(product.get("name", "")), "产品介绍：" + str(product.get("intro", "")),
+        product.get("prompt"), type_config.get("prompt"), agent_config.get("role"), agent_config.get("rules"), image_context,
+        "产品知识：\n" + knowledge if knowledge else ""
+    ] if x]
     system = "\n\n".join(parts) or "你是一个友好的产品伙伴，请准确回答用户问题。"
     safe_history = []
     for item in (history or [])[-20:]:
         if isinstance(item, dict) and item.get("role") in ("user", "assistant") and isinstance(item.get("content"), str):
             safe_history.append({"role": item["role"], "content": item["content"]})
     return [{"role": "system", "content": system}] + safe_history + [{"role": "user", "content": str(message)}]
+
+
+def build_vision_messages(image):
+    return [{"role": "system", "content": "你是产品图像理解助手。请识别图片主体并结合场景扩写，严格返回 JSON，字段包括 subject（主体）、scene（场景）、use_cases（使用场景数组）、suitable_for（适用人群数组）、usage_method（使用方法）、safety（安全提示）。无法确认的内容请写空数组或空字符串，不要臆测品牌和型号。"}, {"role": "user", "content": [{"type": "text", "text": "请理解这张产品图片并按要求返回 JSON。"}, {"type": "image_url", "image_url": {"url": image}}]}]
+
+
+def image_hash(image):
+    return hashlib.sha256(str(image).encode("utf-8")).hexdigest()
 
 
 def redact_profile(profile):
@@ -81,6 +102,10 @@ def save_store(value):
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             json.dump(value, handle, ensure_ascii=False, indent=2)
         os.replace(name, STORE)
+        try:
+            os.chmod(STORE, 0o600)
+        except OSError:
+            pass
     finally:
         if os.path.exists(name):
             os.unlink(name)
@@ -102,6 +127,76 @@ def public_product(product, catalog):
 
 def find_product(slug, store):
     return next((p for p in store.get("products", []) if p.get("slug") == slug), None)
+
+
+def merge_catalog(incoming, existing):
+    incoming = incoming if isinstance(incoming, dict) else {}
+    existing = existing if isinstance(existing, dict) else {}
+    result = {"types": list(incoming.get("types", [])), "models": list(incoming.get("models", []))}
+    old_models = {x.get("id"): x for x in existing.get("models", []) if isinstance(x, dict)}
+    for model in result["models"]:
+        old = old_models.get(model.get("id"), {})
+        for key in ("api_key", "token", "secret"):
+            if not model.get(key) and old.get(key):
+                model[key] = old[key]
+    return result
+
+
+def parse_json_object(text):
+    value = str(text or "").strip().replace("```json", "").replace("```", "").strip()
+    try:
+        parsed = json.loads(value)
+        return parsed if isinstance(parsed, dict) else None
+    except ValueError:
+        match = re.search(r"\{.*\}", value, re.S)
+        try:
+            parsed = json.loads(match.group(0)) if match else None
+            return parsed if isinstance(parsed, dict) else None
+        except ValueError:
+            return None
+
+
+def run_image_understanding(product_id, expected_hash):
+    try:
+        store = load_store(); product = next((p for p in store.get("products", []) if p.get("id") == product_id), None)
+        if not product or not product.get("image") or image_hash(product["image"]) != expected_hash:
+            IMAGE_JOBS.discard((product_id, expected_hash))
+            return
+        catalog = store.get("catalog", {}); profile = next((x for x in catalog.get("models", []) if x.get("id") == product.get("model_profile_id")), {})
+        if not profile.get("api_key") or not profile.get("base_url") or not (profile.get("model") or profile.get("name")):
+            result = {"status": "failed", "image_hash": expected_hash, "error": "请先配置支持视觉输入的模型地址、模型标识和 API Key。"}
+        else:
+            api_key = str(profile["api_key"]); authorization = api_key if api_key.lower().startswith("bearer ") else "Bearer " + api_key
+            payload = {"model": profile.get("model") or profile.get("name"), "messages": build_vision_messages(product["image"]), "temperature": .1, "max_tokens": 1000, "stream": False}
+            request = urllib.request.Request(normalize_chat_url(profile["base_url"]), data=json.dumps(payload).encode("utf-8"), headers={"Content-Type": "application/json", "Authorization": authorization}, method="POST")
+            response = urllib.request.urlopen(request, timeout=120); data = json.loads(response.read().decode("utf-8")); response.close()
+            choices = data.get("choices") or []; message = choices[0].get("message", {}) if choices else {}; content = message.get("content", "") if isinstance(message, dict) else ""
+            understood = parse_json_object(content)
+            result = ({"status": "ready", "image_hash": expected_hash, **{key: understood.get(key) for key in ("subject", "scene", "use_cases", "suitable_for", "usage_method", "safety")}} if understood else {"status": "failed", "image_hash": expected_hash, "error": "模型返回的图片理解结果不是有效 JSON。"})
+    except urllib.error.HTTPError as error:
+        result = {"status": "failed", "image_hash": expected_hash, "error": "图片理解模型返回 HTTP %d。" % error.code}
+    except (urllib.error.URLError, TimeoutError, ValueError, OSError) as error:
+        result = {"status": "failed", "image_hash": expected_hash, "error": "图片理解请求失败：" + str(error)[:160]}
+    store = load_store(); products = store.get("products", [])
+    for item in products:
+        if item.get("id") == product_id and image_hash(item.get("image", "")) == expected_hash:
+            item["image_understanding"] = result
+    save_store(store)
+    IMAGE_JOBS.discard((product_id, expected_hash))
+
+
+def queue_image_understanding(products):
+    for product in products:
+        image = product.get("image")
+        if not image:
+            continue
+        expected_hash = image_hash(image); current = product.get("image_understanding") or {}
+        if current.get("image_hash") == expected_hash and current.get("status") in ("queued", "processing", "ready", "failed"):
+            continue
+        product["image_understanding"] = {"status": "queued", "image_hash": expected_hash}
+        key = (product.get("id"), expected_hash)
+        if key not in IMAGE_JOBS:
+            IMAGE_JOBS.add(key); threading.Thread(target=run_image_understanding, args=key, daemon=True).start()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -155,8 +250,13 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, OSError):
             return self.send_json(400, {"error": {"code": "INVALID_JSON", "message": "请求格式无效"}})
         if path == "/api/v1/admin/sync":
-            save_store({"products": body.get("products", []), "catalog": body.get("catalog", {})})
+            previous = load_store(); products = body.get("products", []); catalog = merge_catalog(body.get("catalog", {}), previous.get("catalog", {})); save_store({"products": products, "catalog": catalog}); queue_image_understanding(products)
             return self.send_json(200, {"ok": True})
+        match = re.fullmatch(r"/api/v1/admin/products/([^/]+)/image-understanding", path)
+        if match:
+            store = load_store(); product = next((x for x in store.get("products", []) if x.get("id") == unquote(match.group(1))), None)
+            if not product: return self.send_json(404, {"error": {"code": "PRODUCT_NOT_FOUND", "message": "产品不存在"}})
+            return self.send_json(200, product.get("image_understanding") or {"status": "idle"})
         match = re.fullmatch(r"/api/v1/public/experiences/(.+)/chat", path)
         if match:
             return self.chat(unquote(match.group(1)), body)
@@ -174,7 +274,7 @@ class Handler(BaseHTTPRequestHandler):
         if not base_url or not model or not api_key:
             return self.send_json(503, {"error": {"code": "MODEL_NOT_CONFIGURED", "message": "尚未配置可用的模型地址、模型标识或 API Key"}})
         type_config = next((x for x in catalog.get("types", []) if x.get("id") == product.get("type")), {})
-        messages = build_messages(type_config, product.get("agent"), [{"title": x.get("title"), "content": x.get("body")} for x in product.get("knowledge", [])], body.get("messages"), body.get("message", ""))
+        messages = build_messages(type_config, product.get("agent"), [{"title": x.get("title"), "content": x.get("body")} for x in product.get("knowledge", [])], body.get("messages"), body.get("message", ""), product)
         payload = {"model": model, "messages": messages, "temperature": profile.get("temperature", .3), "max_tokens": profile.get("max_tokens", 2048), "stream": True}
         authorization = api_key if api_key.lower().startswith("bearer ") else "Bearer " + api_key
         request = urllib.request.Request(normalize_chat_url(base_url), data=json.dumps(payload).encode("utf-8"), headers={"Content-Type": "application/json", "Accept": "text/event-stream", "Authorization": authorization}, method="POST")

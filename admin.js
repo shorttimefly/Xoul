@@ -41,6 +41,7 @@
   }
   function normalize(product){
     const p=clone(product);p.agent={...seed.agent,...p.agent};p.model={...seed.model,...p.model};
+    p.prompt=p.prompt||'';
     p.workflow_options={...seed.workflow_options,...p.workflow_options};
     p.knowledge=p.knowledge||[];p.cards=p.cards||[];p.workflow=p.workflow||[];
     return p;
@@ -87,10 +88,23 @@
   panels[3].querySelector('.panel-title p').textContent='设置模型参数；当前页面仅保存配置';
   const modelHint=el('p','panel-hint','模型服务尚未连接。当前是本机演示配置，请勿填写真实 API Key。');
   panels[3].querySelector('.panel-title').after(modelHint);
+  const imageUnderstanding=el('div','image-understanding');imageUnderstanding.hidden=true;imageUnderstanding.append(el('strong','', '图片理解 · '),el('span','image-understanding-status'));imageUnderstanding.append(el('p','image-understanding-result'));$('imagePreview').after(imageUnderstanding);
+  const productPromptLabel=el('label','wide','产品 Prompt'),productPrompt=el('textarea');productPrompt.id='productPrompt';productPrompt.rows=3;productPrompt.placeholder='描述这个产品希望如何理解自己、陪伴用户和处理边界。';productPromptLabel.append(productPrompt);$('productIntro').parentElement.after(productPromptLabel);productPrompt.addEventListener('input',()=>{current.prompt=productPrompt.value;mark();});
+  let understandingTimer;
+  function refreshImageUnderstanding(){
+    clearTimeout(understandingTimer); if(!current?.image){imageUnderstanding.hidden=true;return;}
+    fetch('http://127.0.0.1:8780/api/v1/admin/products/'+encodeURIComponent(current.id)+'/image-understanding').then(response=>response.json()).then(result=>{
+      imageUnderstanding.hidden=false;const status=imageUnderstanding.querySelector('.image-understanding-status'), output=imageUnderstanding.querySelector('.image-understanding-result');
+      status.textContent={queued:'排队中',processing:'理解中',ready:'已完成',failed:'失败'}[result.status]||'等待提交';
+      output.textContent=result.status==='ready'?[result.subject,result.scene,result.use_cases?.join('、'),result.suitable_for?.join('、'),result.usage_method].filter(Boolean).join(' · '):result.error||'';
+      if(result.status==='queued'||result.status==='processing')understandingTimer=setTimeout(refreshImageUnderstanding,1800);
+    }).catch(()=>{imageUnderstanding.hidden=true;});
+  }
   panels[4].querySelector('.panel-title p').textContent='按顺序编排步骤，可调整先后；执行引擎待接入';
   panels[5].querySelector('h3').textContent='对话引导卡片';
   panels[5].querySelector('.panel-title p').textContent='显示在助手欢迎消息内，点击即可开始';
   $('modelApiKey').placeholder='本地演示，请勿输入真实密钥';
+  $('productImage').setAttribute('capture','environment');
   $('agentRules').placeholder='优先使用产品知识；明确回答范围与边界。';
   Object.entries(fieldMap).forEach(([id,path])=>{
     const input=$(id);
@@ -108,9 +122,11 @@
     });
     if($('modelProfile'))$('modelProfile').value=current.model_profile_id||'';
     $('productId').textContent=current.id;$('entrySlug').textContent='/e/'+current.slug;
+    productPrompt.value=current.prompt||'';
     const preview=$('imagePreview'), previewImg=preview.querySelector('img');
     preview.hidden=!current.image;
     if(current.image) previewImg.src=current.image; else previewImg.removeAttribute('src');
+    refreshImageUnderstanding();
     $('statusText').textContent=current.enabled?'入口已启用':'入口已停用';$('productStatus').classList.toggle('off',!current.enabled);
     $('toggleStatus').textContent=current.enabled?'停用入口':'启用入口';
     renderKnowledge();renderWorkflow();renderCards();stats();tab(activeTab);

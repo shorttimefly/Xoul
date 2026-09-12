@@ -4,7 +4,7 @@ import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import server
-from server import build_messages, extract_delta, normalize_chat_url, redact_profile
+from server import build_messages, build_vision_messages, extract_delta, image_hash, merge_catalog, normalize_chat_url, redact_profile, run_image_understanding
 
 
 class OpenAICompatTests(unittest.TestCase):
@@ -25,10 +25,44 @@ class OpenAICompatTests(unittest.TestCase):
             [{'title': '动作', 'content': '背部保持中立'}],
             [{'role': 'user', 'content': '之前的问题'}],
             '现在怎么做？',
+            {'name': '深蹲训练器 318', 'intro': '陪用户安全训练。', 'prompt': '产品自己的陪练人格。', 'image_understanding': {'status': 'ready', 'subject': '深蹲训练器', 'scene': '健身房', 'use_cases': ['腿部训练']}},
         )
         self.assertEqual(messages[0]['role'], 'system')
         self.assertIn('背部保持中立', messages[0]['content'])
+        self.assertIn('深蹲训练器', messages[0]['content'])
+        self.assertIn('健身房', messages[0]['content'])
+        self.assertIn('产品自己的陪练人格', messages[0]['content'])
         self.assertEqual(messages[-1], {'role': 'user', 'content': '现在怎么做？'})
+
+    def test_vision_prompt_requests_structured_entity_expansion(self):
+        messages = build_vision_messages('data:image/webp;base64,abc')
+        self.assertEqual(messages[0]['role'], 'system')
+        self.assertIn('主体', messages[0]['content'])
+        self.assertIn('适用人群', messages[0]['content'])
+        self.assertEqual(messages[1]['content'][1]['type'], 'image_url')
+
+    def test_catalog_sync_does_not_erase_existing_secret_when_stale_browser_is_blank(self):
+        merged = merge_catalog({'models': [{'id': 'm1', 'name': 'demo', 'api_key': ''}]}, {'models': [{'id': 'm1', 'api_key': 'secret'}]})
+        self.assertEqual(merged['models'][0]['api_key'], 'secret')
+
+    def test_image_understanding_saves_structured_expansion(self):
+        class Vision(BaseHTTPRequestHandler):
+            def do_POST(self):
+                self.rfile.read(int(self.headers['Content-Length']))
+                self.send_response(200); self.send_header('Content-Type', 'application/json'); self.end_headers()
+                content = json.dumps({'subject': '深蹲训练器', 'scene': '健身房', 'use_cases': ['腿部训练'], 'suitable_for': ['健身初学者'], 'usage_method': '站稳后缓慢下蹲', 'safety': '量力而行'})
+                self.wfile.write(json.dumps({'choices': [{'message': {'content': content}}]}).encode())
+            def log_message(self, *_): pass
+        upstream = ThreadingHTTPServer(('127.0.0.1', 0), Vision); threading.Thread(target=upstream.serve_forever, daemon=True).start()
+        original = server.STORE; server.STORE = server.ROOT / '.test-xoul.local.json'; image = 'data:image/webp;base64,abc'
+        server.save_store({'products': [{'id': 'p1', 'image': image, 'model_profile_id': 'm1'}], 'catalog': {'models': [{'id': 'm1', 'base_url': 'http://127.0.0.1:%d' % upstream.server_address[1], 'model': 'vision', 'api_key': 'secret'}]}})
+        try:
+            run_image_understanding('p1', image_hash(image)); result = server.load_store()['products'][0]['image_understanding']
+            self.assertEqual(result['status'], 'ready'); self.assertEqual(result['subject'], '深蹲训练器'); self.assertIn('健身初学者', result['suitable_for'])
+        finally:
+            upstream.shutdown(); upstream.server_close(); server.STORE = original
+            try: (server.ROOT / '.test-xoul.local.json').unlink()
+            except FileNotFoundError: pass
 
     def test_redaction_never_exposes_api_key(self):
         safe = redact_profile({'name': 'demo', 'api_key': 'secret'})
