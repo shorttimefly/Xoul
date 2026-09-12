@@ -27,7 +27,7 @@
     const defaults={types:[{id:'fitness_equipment',name:'健身器材',prompt:'你是懂训练与安全的健身器材伙伴。',image:''},{id:'consumer_product',name:'消费产品',prompt:'你是温和、可靠的产品伙伴。',image:''}],models:[{id:'default_local',name:'本地演示模型',provider:'OpenAI-compatible',base_url:'',model:'',temperature:.3,max_tokens:2048,api_key:''}]};
     try{const value=JSON.parse(localStorage.getItem(CATALOG_KEY));if(value?.types?.length&&value?.models?.length)return value;localStorage.setItem(CATALOG_KEY,JSON.stringify(defaults));return defaults;}catch(_){return defaults;}
   }
-  function syncBackend(products){fetch('http://127.0.0.1:8780/api/v1/admin/sync',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({products,catalog:catalog()})}).catch(()=>{});}
+  function syncBackend(products){fetch(window.XoulApiBase()+'/api/v1/admin/sync',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({products,catalog:catalog()})}).catch(()=>{});}
   function populateSharedCatalog(){
     const shared=catalog(), type=$('productType');
     if(shared.types.length){type.replaceChildren(...shared.types.map(x=>new Option(x.name,x.id)));}
@@ -114,7 +114,7 @@
   let understandingTimer;
   function refreshImageUnderstanding(){
     clearTimeout(understandingTimer); if(!current?.image){imageUnderstanding.hidden=true;return;}
-    fetch('http://127.0.0.1:8780/api/v1/admin/products/'+encodeURIComponent(current.id)+'/image-understanding').then(response=>response.json()).then(result=>{
+    fetch(window.XoulApiBase()+'/api/v1/admin/products/'+encodeURIComponent(current.id)+'/image-understanding').then(response=>response.json()).then(result=>{
       renderImageUnderstanding(result);
       if(result.status==='queued'||result.status==='processing')understandingTimer=setTimeout(refreshImageUnderstanding,1800);
     }).catch(()=>{imageUnderstanding.hidden=true;});
@@ -251,7 +251,8 @@
   $('toggleStatus').onclick=()=>{current.enabled=!current.enabled;mark();fill();notice('入口状态已修改，保存后生效。');};
   $('openExperience').onclick=()=>{
     if(dirty){notice('请先保存修改，再预览最新体验。');return;}
-    window.open('public.html?entrypoint='+encodeURIComponent(current.slug),'_blank','noopener');
+    const target = /^https?:$/.test(location.protocol) ? '/e/'+encodeURIComponent(current.slug) : 'public.html?entrypoint='+encodeURIComponent(current.slug);
+    window.open(target,'_blank','noopener');
   };
   $('productSearch').oninput=renderProducts;
   $('productImage').addEventListener('change',async event=>{

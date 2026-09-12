@@ -66,4 +66,18 @@ GET  /api/v1/admin/products/{product_id}
 PATCH /api/v1/admin/products/{product_id}
 ```
 
+## Hosted path mapping
+
+在 `xoul.teamaihub.com` 下使用同域名路径分配：
+
+```text
+/             XOUL 首页
+/admin        管理端（映射到 admin.html）
+/catalog      公共类型与模型配置（映射到 catalog.html）
+/e/{slug}     产品 C 端 Chat 体验（映射到 public.html）
+/api/...      本地 API 服务（反向代理到 127.0.0.1:8780）
+```
+
+服务器部署不上传本机 `.xoul.local.json`；模型地址、模型标识和 API Key 由服务器端单独配置。
+
 本地 API 使用 Python 标准库实现：`python3 server.py` 监听 `127.0.0.1:8780`。管理端将产品和公共目录同步到 `.xoul.local.json`；C 端调用 `/api/v1/public/experiences/{slug}/chat`，后端向 `{base_url}/v1/chat/completions` 发起 `stream:true` 请求并将 OpenAI SSE 增量归一化后返回。API Key 只在本机后端文件和上游请求中出现，不进入公开入口响应。

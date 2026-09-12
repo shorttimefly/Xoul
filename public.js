@@ -26,7 +26,7 @@
   }
   async function boot(){
    try {
-    const API_BASE=(window.XOUL_API_BASE||'http://127.0.0.1:8780').replace(/\/$/,'');
+    const API_BASE=window.XoulApiBase();
     let config=resolve();
     try { const response=await fetch(API_BASE+'/api/v1/public/entrypoints/'+encodeURIComponent(slug)); if(response.ok) config=await response.json(); } catch(_) {}
     if(!config||config.status==='not_found'){state('没有找到这个产品','请确认访问链接或产品入口。');return;}

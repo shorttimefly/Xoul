@@ -9,7 +9,7 @@
   const load = () => { try { return JSON.parse(localStorage.getItem(K)) || defaults; } catch (_) { return defaults; } };
   const save = value => { localStorage.setItem(K, JSON.stringify(value)); sync(value); };
   function sync(catalog) {
-    fetch('http://127.0.0.1:8780/api/v1/admin/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ catalog, products: JSON.parse(localStorage.getItem('xoul.local.products.v1') || '[]') }) }).catch(() => {});
+    fetch(window.XoulApiBase()+'/api/v1/admin/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ catalog, products: JSON.parse(localStorage.getItem('xoul.local.products.v1') || '[]') }) }).catch(() => {});
   }
   function field(label, value, cb, type) {
     const wrapper = document.createElement('label'); wrapper.textContent = label;
