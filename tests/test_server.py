@@ -4,7 +4,7 @@ import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import server
-from server import admin_catalog, build_messages, build_vision_messages, extract_delta, image_hash, merge_catalog, normalize_chat_url, redact_profile, run_image_understanding, sync_products
+from server import admin_catalog, admin_products, build_messages, build_vision_messages, extract_delta, image_hash, merge_catalog, normalize_chat_url, redact_profile, run_image_understanding, sync_products
 
 
 class OpenAICompatTests(unittest.TestCase):
@@ -129,6 +129,11 @@ class OpenAICompatTests(unittest.TestCase):
         self.assertEqual(safe['models'][0]['model'], 'gpt-5.6')
         self.assertTrue(safe['models'][0]['api_key_configured'])
         self.assertNotIn('api_key', safe['models'][0])
+
+    def test_admin_products_excludes_legacy_product_credentials(self):
+        safe = admin_products([{'id': 'p1', 'model': {'model': 'gpt-5.6', 'api_key': 'secret'}}])
+        self.assertEqual(safe[0]['model']['model'], 'gpt-5.6')
+        self.assertNotIn('api_key', safe[0]['model'])
 
     def test_public_model_is_configured_only_when_endpoint_model_and_key_exist(self):
         product = {'id': 'p1', 'name': 'P1', 'enabled': True, 'model_profile_id': 'm1'}

@@ -163,6 +163,19 @@ def admin_catalog(catalog):
     return result
 
 
+def admin_products(products):
+    """Return editable products without legacy per-product credentials."""
+    result = []
+    for product in products or []:
+        safe = dict(product)
+        model = dict(safe.get("model") or {})
+        for key in ("api_key", "token", "secret"):
+            model.pop(key, None)
+        safe["model"] = model
+        result.append(safe)
+    return result
+
+
 def find_product(slug, store):
     return next((p for p in store.get("products", []) if p.get("slug") == slug), None)
 
@@ -283,7 +296,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/v1/admin/catalog":
             return self.send_json(200, admin_catalog(load_store().get("catalog", {})))
         if path == "/api/v1/admin/products":
-            return self.send_json(200, {"products": load_store().get("products", [])})
+            return self.send_json(200, {"products": admin_products(load_store().get("products", []))})
         match = re.fullmatch(r"/api/v1/public/entrypoints/(.+)", path)
         if match:
             store = load_store(); product = find_product(unquote(match.group(1)), store)
