@@ -18,7 +18,7 @@ from urllib.parse import unquote, urlparse
 
 ROOT = Path(__file__).resolve().parent
 STORE = ROOT / ".xoul.local.json"
-MAX_BODY = 2 * 1024 * 1024
+MAX_BODY = 8 * 1024 * 1024
 STORE_LOCK = threading.RLock()
 IMAGE_JOBS = set()
 TYPE_ASSIGNMENT_JOBS = set()
