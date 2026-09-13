@@ -111,7 +111,7 @@ def build_messages(type_config, agent_config, entries, history, message, product
     understood = product.get("image_understanding") or {}
     image_context = ""
     if understood.get("status") == "ready":
-        image_context = "图片理解：\n" + (understood.get("raw_text") or json.dumps({k: understood.get(k) for k in ("subject", "scene", "use_cases", "suitable_for", "usage_method", "safety", "product_prompt") if understood.get(k)}, ensure_ascii=False))
+        image_context = "图片理解：\n" + (understood.get("raw_text") or json.dumps({k: understood.get(k) for k in ("subject", "scene", "visible_text", "brand", "use_cases", "suitable_for", "usage_method", "safety", "product_prompt") if understood.get(k)}, ensure_ascii=False))
     extra_fields = []
     for field in product.get("extra_fields") or []:
         if not isinstance(field, dict):
@@ -165,7 +165,28 @@ def build_messages(type_config, agent_config, entries, history, message, product
 
 
 def build_vision_messages(image):
-    return [{"role": "system", "content": "你是产品图像理解助手。请识别图片主体并结合场景扩写，严格返回 JSON，字段包括 subject（主体）、scene（场景）、use_cases（使用场景数组）、suitable_for（适用人群数组）、usage_method（使用方法）、safety（安全提示）、product_prompt（给这个产品使用的第一人称产品 Prompt）。product_prompt 要描述产品身份、可提供的帮助和安全边界；无法确认的内容请写空数组或空字符串，不要臆测品牌、型号、承重等精确参数。"}, {"role": "user", "content": [{"type": "text", "text": "请理解这张产品图片并按要求返回 JSON。"}, {"type": "image_url", "image_url": {"url": image}}]}]
+    return [{"role": "system", "content": "你是产品图像理解助手。请识别图片主体并结合场景扩写，严格返回 JSON，字段包括 subject（主体）、scene（场景）、visible_text（图片中清晰可见的文字，按从上到下或从左到右记录，无法确认时为空字符串）、brand（对象，字段 is_known 表示是否能根据清晰证据确认是知名品牌，name 为品牌名称，evidence 为判断依据；无法确认时 is_known=false、name 和 evidence 为空）。同时返回 use_cases（使用场景数组）、suitable_for（适用人群数组）、usage_method（使用方法）、safety（安全提示）、product_prompt（给这个产品使用的第一人称产品 Prompt）。如果 brand.is_known=true，必须把确认的品牌名称写进 product_prompt，并说明产品身份、可提供的帮助和安全边界；如果没有清晰证据，绝不能猜测或把疑似品牌写进 Prompt。不要臆测型号、承重等精确参数。"}, {"role": "user", "content": [{"type": "text", "text": "请理解这张产品图片，优先读取清晰可见文字，并核验是否有明确的知名品牌标识，然后按要求返回 JSON。"}, {"type": "image_url", "image_url": {"url": image}}]}]
+
+
+def normalize_brand_info(value):
+    value = value if isinstance(value, dict) else {}
+    known = value.get("is_known")
+    if isinstance(known, str):
+        known = known.strip().lower() in ("true", "1", "yes", "是", "已确认")
+    else:
+        known = bool(known)
+    return {"is_known": known, "name": str(value.get("name") or "").strip(), "evidence": str(value.get("evidence") or "").strip()}
+
+
+def add_confirmed_brand_to_prompt(prompt, brand):
+    prompt = str(prompt or "").strip()
+    brand = normalize_brand_info(brand)
+    if not brand["is_known"] or not brand["name"]:
+        return prompt
+    if brand["name"].casefold() in prompt.casefold():
+        return prompt
+    suffix = "品牌信息：这是%s品牌产品；仅依据图片中清晰可见的品牌标识确认。" % brand["name"]
+    return (prompt + "\n" + suffix).strip() if prompt else suffix
 
 
 def build_type_assignment_messages(product_prompt, types):
@@ -428,7 +449,11 @@ def run_image_understanding(product_id, expected_hash):
             response = urllib.request.urlopen(request, timeout=120); data = json.loads(response.read().decode("utf-8")); response.close()
             choices = data.get("choices") or []; message = choices[0].get("message", {}) if choices else {}; content = message.get("content", "") if isinstance(message, dict) else ""
             understood = parse_json_object(content)
-            result = ({"status": "ready", "image_hash": expected_hash, **{key: understood.get(key) for key in ("subject", "scene", "use_cases", "suitable_for", "usage_method", "safety", "product_prompt")}} if understood else {"status": "failed", "image_hash": expected_hash, "error": "模型返回的图片理解结果不是有效 JSON。"})
+            if understood:
+                brand = normalize_brand_info(understood.get("brand"))
+                result = {"status": "ready", "image_hash": expected_hash, **{key: understood.get(key) for key in ("subject", "scene", "visible_text", "use_cases", "suitable_for", "usage_method", "safety")}, "brand": brand, "product_prompt": add_confirmed_brand_to_prompt(understood.get("product_prompt"), brand)}
+            else:
+                result = {"status": "failed", "image_hash": expected_hash, "error": "模型返回的图片理解结果不是有效 JSON。"}
     except urllib.error.HTTPError as error:
         result = {"status": "failed", "image_hash": expected_hash, "error": "图片理解模型返回 HTTP %d。" % error.code}
     except (urllib.error.URLError, TimeoutError, ValueError, OSError) as error:

@@ -9,3 +9,4 @@
 - Added quick Agent creation from an uploaded or camera-captured product image. The flow polls image understanding and Prompt-based product type assignment before presenting the generated C-end URL.
 - Added `GET /api/v1/admin/products/{product_id}/type-assignment` for the asynchronous product type assignment status; the selected catalog type is persisted on the product when ready.
 - Product management now generates a copyable C-end URL at `/e/{slug}` for direct preview and NFC writing.
+- Image understanding now returns `visible_text` and evidence-backed `brand` metadata; a confirmed brand name is included in the generated product Prompt.

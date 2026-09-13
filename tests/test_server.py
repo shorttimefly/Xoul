@@ -4,7 +4,7 @@ import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import server
-from server import admin_catalog, admin_products, build_messages, build_vision_messages, extract_delta, get_image_understanding, image_hash, merge_catalog, normalize_chat_url, redact_profile, run_image_understanding, sync_products, sync_user_profiles, seed_user_profiles, public_user_profiles, record_profile_event
+from server import add_confirmed_brand_to_prompt, admin_catalog, admin_products, build_messages, build_vision_messages, extract_delta, get_image_understanding, image_hash, merge_catalog, normalize_chat_url, redact_profile, run_image_understanding, sync_products, sync_user_profiles, seed_user_profiles, public_user_profiles, record_profile_event
 
 
 class OpenAICompatTests(unittest.TestCase):
@@ -71,12 +71,13 @@ class OpenAICompatTests(unittest.TestCase):
             [{'title': '动作', 'content': '背部保持中立'}],
             [{'role': 'user', 'content': '之前的问题'}],
             '现在怎么做？',
-            {'name': '深蹲训练器 318', 'intro': '陪用户安全训练。', 'prompt': '产品自己的陪练人格。', 'image_understanding': {'status': 'ready', 'subject': '深蹲训练器', 'scene': '健身房', 'use_cases': ['腿部训练']}},
+            {'name': '深蹲训练器 318', 'intro': '陪用户安全训练。', 'prompt': '产品自己的陪练人格。', 'image_understanding': {'status': 'ready', 'subject': '深蹲训练器', 'scene': '健身房', 'visible_text': 'POWER FIT', 'brand': {'is_known': True, 'name': 'POWER FIT'}, 'use_cases': ['腿部训练']}},
         )
         self.assertEqual(messages[0]['role'], 'system')
         self.assertIn('背部保持中立', messages[0]['content'])
         self.assertIn('深蹲训练器', messages[0]['content'])
         self.assertIn('健身房', messages[0]['content'])
+        self.assertIn('POWER FIT', messages[0]['content'])
         self.assertIn('产品自己的陪练人格', messages[0]['content'])
         self.assertEqual(messages[-1], {'role': 'user', 'content': '现在怎么做？'})
 
@@ -138,7 +139,14 @@ class OpenAICompatTests(unittest.TestCase):
         self.assertEqual(messages[0]['role'], 'system')
         self.assertIn('主体', messages[0]['content'])
         self.assertIn('适用人群', messages[0]['content'])
+        self.assertIn('visible_text', messages[0]['content'])
+        self.assertIn('brand', messages[0]['content'])
+        self.assertIn('知名品牌', messages[0]['content'])
         self.assertEqual(messages[1]['content'][1]['type'], 'image_url')
+
+    def test_unconfirmed_brand_is_not_added_to_product_prompt(self):
+        prompt = add_confirmed_brand_to_prompt('你是一个产品助手。', {'is_known': False, 'name': '疑似品牌'})
+        self.assertEqual(prompt, '你是一个产品助手。')
 
     def test_image_understanding_status_can_be_read_without_mutation(self):
         self.assertEqual(get_image_understanding('p1', {'products': [{'id': 'p1'}]}), {'status': 'idle'})
@@ -177,7 +185,7 @@ class OpenAICompatTests(unittest.TestCase):
             def do_POST(self):
                 self.rfile.read(int(self.headers['Content-Length']))
                 self.send_response(200); self.send_header('Content-Type', 'application/json'); self.end_headers()
-                content = json.dumps({'subject': '深蹲训练器', 'scene': '健身房', 'use_cases': ['腿部训练'], 'suitable_for': ['健身初学者'], 'usage_method': '站稳后缓慢下蹲', 'safety': '量力而行', 'product_prompt': '你是深蹲训练器，陪用户安全完成力量训练。'})
+                content = json.dumps({'subject': '深蹲训练器', 'scene': '健身房', 'visible_text': 'POWER FIT\nSQUAT PRO', 'brand': {'is_known': True, 'name': 'POWER FIT', 'evidence': '器械铭牌清晰可见'}, 'use_cases': ['腿部训练'], 'suitable_for': ['健身初学者'], 'usage_method': '站稳后缓慢下蹲', 'safety': '量力而行', 'product_prompt': '你是深蹲训练器，陪用户安全完成力量训练。'})
                 self.wfile.write(json.dumps({'choices': [{'message': {'content': content}}]}).encode())
             def log_message(self, *_): pass
         upstream = ThreadingHTTPServer(('127.0.0.1', 0), Vision); threading.Thread(target=upstream.serve_forever, daemon=True).start()
@@ -185,7 +193,7 @@ class OpenAICompatTests(unittest.TestCase):
         server.save_store({'products': [{'id': 'p1', 'image': image, 'model_profile_id': 'm1'}], 'catalog': {'models': [{'id': 'm1', 'base_url': 'http://127.0.0.1:%d' % upstream.server_address[1], 'model': 'vision', 'api_key': 'secret'}]}})
         try:
             run_image_understanding('p1', image_hash(image)); result = server.load_store()['products'][0]['image_understanding']
-            self.assertEqual(result['status'], 'ready'); self.assertEqual(result['subject'], '深蹲训练器'); self.assertIn('健身初学者', result['suitable_for']); self.assertEqual(result['product_prompt'], '你是深蹲训练器，陪用户安全完成力量训练。'); self.assertEqual(server.load_store()['products'][0]['prompt'], result['product_prompt'])
+            self.assertEqual(result['status'], 'ready'); self.assertEqual(result['subject'], '深蹲训练器'); self.assertEqual(result['visible_text'], 'POWER FIT\nSQUAT PRO'); self.assertEqual(result['brand']['name'], 'POWER FIT'); self.assertIn('健身初学者', result['suitable_for']); self.assertIn('POWER FIT', result['product_prompt']); self.assertIn('POWER FIT', server.load_store()['products'][0]['prompt'])
         finally:
             upstream.shutdown(); upstream.server_close(); server.STORE = original
             try: (server.ROOT / '.test-xoul.local.json').unlink()
