@@ -2,9 +2,9 @@
 <html lang="zh-CN">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>XOUL Console</title><link rel="icon" href="favicon.svg"><link rel="stylesheet" href="admin.css"></head>
 <body>
-<header class="topbar"><a class="brand" href="index.html">XOUL <span>STUDIO</span></a><div class="top-actions"><a class="ghost" href="types.html">产品类型</a><a class="ghost" href="models.html">模型接入</a><span class="local-badge">本地工作区</span><span class="saved" id="saveState" role="status">本地已保存</span><button class="ghost" id="openExperience">预览体验 ↗</button></div></header>
+<header class="topbar"><a class="brand" href="index.html">XOUL <span>STUDIO</span></a><div class="top-actions"><a class="ghost" href="types.html">产品类型</a><a class="ghost" href="models.html">模型接入</a><a class="ghost" href="profiles.html">用户画像</a><span class="local-badge">本地工作区</span><span class="saved" id="saveState" role="status">本地已保存</span><button class="ghost" id="openExperience">预览体验 ↗</button></div></header>
 <main class="shell">
-<aside class="sidebar"><div class="side-head"><div><small>YOUR ENTITIES</small><h1>我的产品</h1></div><button class="add" id="newProduct" aria-label="创建产品">＋</button></div><label class="search-label"><span>搜索产品</span><input id="productSearch" type="search" placeholder="名称或产品 ID"></label><div id="productList" class="product-list"></div><div class="side-note"><span class="side-orbit">◎</span><strong>让每件产品，都能对话。</strong><p>配置一次，通过产品入口连接每一位用户。</p></div></aside>
+<aside class="sidebar"><div class="side-head"><div><small>YOUR ENTITIES</small><h1>我的产品</h1></div><div class="side-head-actions"><button class="add" id="newProduct" aria-label="创建产品">＋</button><button class="quick-add-trigger" id="quickAddTrigger" type="button">快速添加</button></div></div><label class="search-label"><span>搜索产品</span><input id="productSearch" type="search" placeholder="名称或产品 ID"></label><div id="productList" class="product-list"></div><div class="side-note"><span class="side-orbit">◎</span><strong>让每件产品，都能对话。</strong><p>配置一次，通过产品入口连接每一位用户。</p></div></aside>
 <section class="content"><div class="page-head"><div><p class="eyebrow">PRODUCT EXPERIENCE</p><h2 id="pageTitle">产品配置</h2><p class="muted">配置身份、知识和 Agent，碰一碰即可进入。</p></div><div class="status-wrap"><span id="productStatus" class="status-dot"></span><span id="statusText">已启用</span><button class="text-btn" id="toggleStatus">停用入口</button></div></div>
 <div id="notice" class="notice" role="status" hidden></div>
 <div class="overview-strip"><div><span>知识条目</span><strong id="knowledgeCount">0</strong></div><div><span>引导卡片</span><strong id="cardCount">0</strong></div><div><span>流程步骤</span><strong id="stepCount">0</strong></div><div><span>运行方式</span><strong class="demo-label">本地演示</strong></div></div>
@@ -17,4 +17,15 @@
 <section class="panel"><div class="panel-title"><span class="num">05</span><div><h3>Workflow</h3><p>配置执行步骤、分支和工具调用</p></div><button type="button" class="small-btn" id="addStep">＋ 添加步骤</button></div><div class="form-grid workflow-options"><label>最大循环次数<input id="workflowMaxIterations" type="number" min="1" max="10" value="3"></label><label>失败策略<select id="workflowFailurePolicy"><option value="stop">停止并说明</option><option value="fallback">切换备用模型</option><option value="retry">自动重试一次</option></select></label></div><div id="workflowList" class="workflow-list"></div></section>
 <section class="panel"><div class="panel-title"><span class="num">05</span><div><h3>功能引导卡片</h3><p>C 端首页展示，点击后直接开始</p></div><button type="button" class="small-btn" id="addCard">＋ 添加卡片</button></div><div id="cardList" class="card-list"></div></section>
 <div class="form-actions"><span id="dirtyHint" class="muted" role="status">修改后保存，即可预览</span><button type="submit" class="primary">保存产品配置</button></div>
-</form></section></main><script src="api-base.js"></script><script src="data.js"></script><script src="admin.js"></script></body></html>
+</form></section></main>
+<dialog id="quickAddDialog" class="quick-add-dialog" aria-labelledby="quickAddTitle">
+  <form method="dialog" id="quickAddForm" class="quick-add-card">
+    <div class="quick-add-head"><div><p class="eyebrow">FAST AGENT SETUP</p><h2 id="quickAddTitle">快速添加 Agent</h2></div><button type="button" class="dialog-close" id="quickAddClose" aria-label="关闭快速添加">×</button></div>
+    <p class="quick-add-copy">上传产品图片或直接拍照，系统会异步生成产品 Prompt、分配产品类型，并创建一个可打开的 Agent 入口。</p>
+    <label class="quick-add-upload"><span>选择图片 / 拍照</span><input id="quickAddImage" type="file" accept="image/png,image/jpeg,image/webp" capture="environment"><small>支持 PNG / JPG / WebP，最大 2MB；手机端会请求相机权限。</small></label>
+    <div id="quickAddPreview" class="quick-add-preview" hidden><img alt="待创建 Agent 的产品图片"><div><strong>图片已准备好</strong><p>点击提交后开始识别。</p></div></div>
+    <div id="quickAddStatus" class="quick-add-status" role="status" hidden></div>
+    <div class="quick-add-actions"><button type="button" class="small-btn" id="quickAddCancel">取消</button><button type="submit" class="primary" id="quickAddSubmit" disabled>提交并创建 Agent</button></div>
+  </form>
+</dialog>
+<script src="api-base.js"></script><script src="data.js"></script><script src="user-profile-data.js"></script><script src="admin.js"></script></body></html>

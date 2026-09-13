@@ -12,19 +12,20 @@
 - Product Registry：产品创建、唯一 Product ID、启用/停用。
 - Entrypoint Resolver：公开 slug 解析到 Product ID 与 Experience。
 - Product URL：管理端根据当前站点 origin 与公开 slug 生成完整 C 端 URL，支持一键打开和复制，可直接写入 NFC；修改 slug 后链接自动更新。
-- Knowledge：简单的文字知识条目管理；支持导入 `.md`、PNG/JPG/WebP 图片并作为可编辑知识条目绑定到当前产品。
+- Knowledge：简单的文字知识条目管理；支持导入 `.md`、`.csv`、PNG/JPG/WebP 图片并作为可编辑知识条目绑定到当前产品。
 - Extensible product context：产品支持自定义 `extra_fields` key/value 数组；非空字段会和产品 Prompt、类型 Prompt、图片理解结果、知识条目一起注入 C 端对话上下文。知识库图片只注入标题和说明，不默认发送给模型；用户询问图片/示意时由聊天界面按需展示。
 - Agent Definition：角色、语气、回答规则、记忆开关。
 - Shared Model Reference：模型连接只在公共模型库维护；产品仅选择 `model_profile_id`，不保存 Provider、接口地址或 API Key。
 - Workflow Definition：开放式步骤配置；步骤作为模型编排约束注入上下文，由模型按问题选择需要的知识和步骤，不强制机械执行全部步骤。当前不是独立的检索/工具编排引擎。
 - Capability Cards：产品级可配置引导卡片。
 - C 端 Experience：产品身份、卡片、聊天记录和模拟引用；知识库图片仅在用户明确询问图片/示意/外观时由聊天区按需展示。
+- User Profile Memory：本地用户画像包含头像、偏好、目标和注意事项；每个用户在每个 Agent 下的输入与回答完整留存，当前 Agent 仅取最近记录参与上下文；后台提供用户画像管理，C 端提供已登录状态和画像切换体验。
 - 健身示例：动作指导、主要肌群、训练量计算、安全注意事项。
 
 ## Non-goals
 
 - 不开发 NFC 写卡、NFC SDK 或芯片读写。
-- 不接真实数据库、对象存储或文档解析服务；Markdown 在浏览器本地读取并保存为产品知识条目。模型已支持本地 OpenAI-compatible 代理，需在公共模型配置中填写地址、模型标识和 API Key。
+- 不接真实数据库、对象存储或文档解析服务；Markdown/CSV 在浏览器本地读取并保存为产品知识条目，原始文本随产品上下文发送给模型。模型已支持本地 OpenAI-compatible 代理，需在公共模型配置中填写地址、模型标识和 API Key。
 - 不做多租户、登录、支付、复杂 RBAC、Multi-Agent、拖拽式 Workflow 编辑器。
 
 ## Product contract
@@ -58,7 +59,9 @@ Product ID 与公开入口分离。入口可停用或重新绑定；C 端只拿�
 - C 端实际挂载 Chat UI 控制器，只有一个输入框；异步回答期间不重建输入框、不丢草稿。
 - 管理端六个页签可切换，动态添加条目不丢失正在编辑的内容，保存卡片后保留能力绑定。
 - 产品可添加、修改、删除扩展字段；保存后扩展字段出现在模型请求的 system context 中。
-- 选择 `.md` 或图片文件后新增一条以文件名命名的知识条目，保存后文本进入当前产品的对话上下文；图片在用户需要时由聊天区展示。
+- 选择 `.md`、`.csv` 或图片文件后新增一条以文件名命名的知识条目，保存后文本进入当前产品的对话上下文；图片在用户需要时由聊天区展示。
+- 后台用户画像页面可管理用户名称、头像、偏好、目标、注意事项和启停；首次运行预置 3 个 Seed。
+- C 端显示当前用户身份，切换 3 个 Seed 后聊天记录隔离，发送请求携带画像标识，后端按 Agent 保存互动。
 
 ## Suggested future API boundary
 

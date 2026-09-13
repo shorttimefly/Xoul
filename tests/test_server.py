@@ -4,10 +4,52 @@ import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import server
-from server import admin_catalog, admin_products, build_messages, build_vision_messages, extract_delta, image_hash, merge_catalog, normalize_chat_url, redact_profile, run_image_understanding, sync_products
+from server import admin_catalog, admin_products, build_messages, build_vision_messages, extract_delta, get_image_understanding, image_hash, merge_catalog, normalize_chat_url, redact_profile, run_image_understanding, sync_products, sync_user_profiles, seed_user_profiles, public_user_profiles, record_profile_event
 
 
 class OpenAICompatTests(unittest.TestCase):
+    def test_seed_user_profiles_are_three_safe_demo_identities(self):
+        profiles = seed_user_profiles()
+        self.assertEqual(len(profiles), 3)
+        self.assertEqual(len({profile['id'] for profile in profiles}), 3)
+        self.assertTrue(all(profile['name'] and profile['avatar'] and profile['preferences'] for profile in profiles))
+
+    def test_build_messages_includes_current_user_profile_and_agent_memory(self):
+        messages = build_messages(
+            {}, {}, [], [], '今天怎么练？', {'name': '训练器'},
+            user_profile={'name': '林夏', 'headline': '刚开始训练', 'preferences': ['循序渐进'], 'goals': ['每周训练 3 次']},
+            profile_history=[
+                {'role': 'user', 'content': '我膝盖最近有点紧'},
+                {'role': 'assistant', 'content': '先降低幅度并充分热身'},
+            ],
+        )
+        prompt = messages[0]['content']
+        self.assertIn('当前用户画像', prompt)
+        self.assertIn('林夏', prompt)
+        self.assertIn('循序渐进', prompt)
+        self.assertIn('与当前 Agent 的近期互动', prompt)
+        self.assertIn('我膝盖最近有点紧', prompt)
+
+    def test_profile_event_is_scoped_to_agent_and_preserves_history(self):
+        store = {'user_profiles': [{'id': 'u1', 'name': '林夏'}]}
+        for index in range(30):
+            record_profile_event(store, 'u1', 'agent-a', 'user', '输入 %d' % index)
+        record_profile_event(store, 'u1', 'agent-b', 'user', '另一个 Agent')
+        events = store['user_profiles'][0]['agent_history']
+        self.assertEqual(events[-1]['agent_id'], 'agent-b')
+        self.assertEqual(len([event for event in events if event['agent_id'] == 'agent-a']), 30)
+        self.assertEqual(events[-1]['content'], '另一个 Agent')
+
+    def test_public_user_profiles_redacts_private_fields(self):
+        profiles = public_user_profiles([{'id': 'u1', 'name': '林夏', 'agent_history': [{'content': '秘密'}], 'notes': '偏好'}])
+        self.assertEqual(profiles[0]['name'], '林夏')
+        self.assertEqual(profiles[0]['notes'], '偏好')
+        self.assertNotIn('agent_history', profiles[0])
+
+    def test_sync_user_profiles_preserves_existing_when_omitted(self):
+        existing = [{'id': 'u1', 'name': '林夏'}]
+        self.assertEqual(sync_user_profiles({}, existing), existing)
+        self.assertEqual(sync_user_profiles({'user_profiles': []}, existing), [])
     def test_sync_without_products_preserves_existing_products(self):
         existing = [{'id': 'p1', 'slug': 'one'}]
         self.assertEqual(sync_products({}, existing), existing)
@@ -54,6 +96,16 @@ class OpenAICompatTests(unittest.TestCase):
         self.assertIn('训练重点：下肢力量', messages[0]['content'])
         self.assertIn('使用限制：仅限室内平整地面', messages[0]['content'])
 
+    def test_build_messages_includes_csv_knowledge_content(self):
+        messages = build_messages(
+            {}, {}, [{'title': '训练计划.csv', 'content': '动作,组数,次数\n深蹲,4,12', 'source': 'CSV 文件'}],
+            [], '今天怎么练？', {'name': '训练器'},
+        )
+        prompt = messages[0]['content']
+        self.assertIn('训练计划.csv', prompt)
+        self.assertIn('动作,组数,次数', prompt)
+        self.assertIn('深蹲,4,12', prompt)
+
     def test_build_messages_keeps_knowledge_image_out_of_model_context(self):
         messages = build_messages(
             {}, {}, [{'title': '器械示意图', 'content': '动作示意', 'image': 'data:image/webp;base64,abc'}],
@@ -87,6 +139,26 @@ class OpenAICompatTests(unittest.TestCase):
         self.assertIn('主体', messages[0]['content'])
         self.assertIn('适用人群', messages[0]['content'])
         self.assertEqual(messages[1]['content'][1]['type'], 'image_url')
+
+    def test_image_understanding_status_can_be_read_without_mutation(self):
+        self.assertEqual(get_image_understanding('p1', {'products': [{'id': 'p1'}]}), {'status': 'idle'})
+        self.assertIsNone(get_image_understanding('missing', {'products': [{'id': 'p1'}]}))
+
+    def test_image_understanding_get_endpoint_returns_status(self):
+        original = server.STORE
+        server.STORE = server.ROOT / '.test-xoul-image-status.json'
+        server.save_store({'products': [{'id': 'p1', 'image_understanding': {'status': 'queued'}}]})
+        api = ThreadingHTTPServer(('127.0.0.1', 0), server.Handler)
+        threading.Thread(target=api.serve_forever, daemon=True).start()
+        try:
+            import urllib.request
+            response = urllib.request.urlopen('http://127.0.0.1:%d/api/v1/admin/products/p1/image-understanding' % api.server_address[1])
+            self.assertEqual(response.status, 200)
+            self.assertEqual(json.loads(response.read()), {'status': 'queued'})
+        finally:
+            api.shutdown(); api.server_close(); server.STORE = original
+            try: (server.ROOT / '.test-xoul-image-status.json').unlink()
+            except FileNotFoundError: pass
 
     def test_catalog_sync_does_not_erase_existing_secret_when_stale_browser_is_blank(self):
         merged = merge_catalog({'models': [{'id': 'm1', 'name': 'demo', 'api_key': ''}]}, {'models': [{'id': 'm1', 'api_key': 'secret'}]})
@@ -166,6 +238,29 @@ class OpenAICompatTests(unittest.TestCase):
         finally:
             api.shutdown(); api.server_close(); upstream.shutdown(); upstream.server_close(); server.STORE = original
             try: (server.ROOT / '.test-xoul.local.json').unlink()
+            except FileNotFoundError: pass
+
+    def test_local_chat_persists_profile_events_and_injects_agent_memory(self):
+        received = {}
+        class Upstream(BaseHTTPRequestHandler):
+            def do_POST(self):
+                received['body'] = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+                self.send_response(200); self.send_header('Content-Type', 'text/event-stream'); self.end_headers()
+                self.wfile.write(('data: ' + json.dumps({'choices': [{'delta': {'content': '已按林夏的节奏安排。'}}]}, ensure_ascii=False) + '\n\n').encode()); self.wfile.write(b'data: [DONE]\n\n'); self.wfile.flush()
+            def log_message(self, *_): pass
+        upstream = ThreadingHTTPServer(('127.0.0.1', 0), Upstream); threading.Thread(target=upstream.serve_forever, daemon=True).start()
+        original = server.STORE; server.STORE = server.ROOT / '.test-xoul-profile.local.json'
+        server.save_store({'products': [{'id': 'p1', 'slug': 'p1', 'name': 'P1', 'enabled': True, 'type': 't1', 'agent': {'id': 'agent-1'}, 'knowledge': [], 'cards': [], 'model_profile_id': 'm1'}], 'catalog': {'types': [], 'models': [{'id': 'm1', 'base_url': 'http://127.0.0.1:%d' % upstream.server_address[1], 'model': 'demo', 'api_key': 'secret'}]}, 'user_profiles': seed_user_profiles()})
+        api = ThreadingHTTPServer(('127.0.0.1', 0), server.Handler); threading.Thread(target=api.serve_forever, daemon=True).start()
+        try:
+            import urllib.request
+            request = urllib.request.Request('http://127.0.0.1:%d/api/v1/public/experiences/p1/chat' % api.server_address[1], data=json.dumps({'profile_id': 'user_linxia', 'message': '我今天时间比较少', 'messages': []}).encode(), headers={'Content-Type': 'application/json'})
+            response = urllib.request.urlopen(request); response.read()
+            prompt = received['body']['messages'][0]['content']; self.assertIn('林夏', prompt); self.assertIn('每周训练 3 次', prompt); self.assertEqual(received['body']['messages'][-1]['content'], '我今天时间比较少')
+            saved = server.load_store()['user_profiles'][0]['agent_history']; self.assertEqual([event['role'] for event in saved], ['user', 'assistant']); self.assertIn('已按林夏', saved[-1]['content'])
+        finally:
+            api.shutdown(); api.server_close(); upstream.shutdown(); upstream.server_close(); server.STORE = original
+            try: (server.ROOT / '.test-xoul-profile.local.json').unlink()
             except FileNotFoundError: pass
 
 

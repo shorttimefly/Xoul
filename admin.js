@@ -8,7 +8,7 @@
   const capabilityNames={custom:'对话问答',explain_exercise:'动作指导',identify_muscles:'肌群说明',calculate_training_volume:'训练量计算',check_safety_notes:'安全事项'};
   const panelNames=['产品身份','知识库','Agent 设定','模型接入','Workflow','对话卡片'];
   const panels=[...document.querySelectorAll('.panel')];
-  let current, dirty=false, activeTab=0, noticeTimer, imageRequest=0, imageLoading=false;
+  let current, dirty=false, activeTab=0, noticeTimer, imageRequest=0, imageLoading=false, quickAddTimer, quickAddProduct;
   const fieldMap={
     productName:['name'],productType:['type'],productIntro:['intro'],
     agentName:['agent','name'],agentTone:['agent','tone'],agentWelcome:['agent','welcome'],agentRole:['agent','role'],agentRules:['agent','rules'],memoryEnabled:['agent','memory'],
@@ -26,7 +26,19 @@
     const defaults={types:[{id:'fitness_equipment',name:'健身器材',prompt:'你是懂训练与安全的健身器材伙伴。',image:''},{id:'consumer_product',name:'消费产品',prompt:'你是温和、可靠的产品伙伴。',image:''}],models:[{id:'default_local',name:'本地演示模型',provider:'OpenAI-compatible',base_url:'',model:'',temperature:.3,max_tokens:2048,api_key:''}]};
     try{const value=JSON.parse(localStorage.getItem(CATALOG_KEY));if(value?.types?.length&&value?.models?.length)return value;localStorage.setItem(CATALOG_KEY,JSON.stringify(defaults));return defaults;}catch(_){return defaults;}
   }
-  function syncBackend(products){return fetch(window.XoulApiBase()+'/api/v1/admin/sync',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({products,catalog:catalog()})}).catch(()=>null);}
+  function profileStore(){return window.XoulProfiles?.load?window.XoulProfiles.load():[];}
+  function syncBackend(products){return fetch(window.XoulApiBase()+'/api/v1/admin/sync',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({products,catalog:catalog(),user_profiles:profileStore()})}).then(response=>{if(!response.ok)throw new Error('HTTP '+response.status);return response;});}
+  function quickAddNotice(message, tone){const box=$('quickAddStatus');box.textContent=message;box.dataset.tone=tone||'info';box.hidden=!message;}
+  function quickAddUrl(product){const slug=encodeURIComponent(product?.slug||'');return /^https?:$/.test(location.protocol)?location.origin+'/e/'+slug:new URL('public.html?entrypoint='+slug,location.href).href;}
+  function quickAddProducts(product){const products=load(),index=products.findIndex(item=>item.id===product.id);if(index<0)products.push(clone(product));else products[index]=clone(product);localStorage.setItem(KEY,JSON.stringify(products));}
+  function quickAddImageData(file){return new Promise((resolve,reject)=>{if(!file||!['image/png','image/jpeg','image/webp'].includes(file.type))return reject(new Error('format'));if(file.size>2*1024*1024)return reject(new Error('size'));const url=URL.createObjectURL(file),photo=new Image();photo.onload=()=>{try{if(!photo.naturalWidth||photo.naturalWidth*photo.naturalHeight>16000000)throw new Error('dimensions');const scale=Math.min(1,1200/Math.max(photo.naturalWidth,photo.naturalHeight)),canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(photo.naturalWidth*scale));canvas.height=Math.max(1,Math.round(photo.naturalHeight*scale));canvas.getContext('2d').drawImage(photo,0,0,canvas.width,canvas.height);resolve(canvas.toDataURL('image/webp',.85));}catch(error){reject(error);}finally{URL.revokeObjectURL(url);}};photo.onerror=()=>{URL.revokeObjectURL(url);reject(new Error('read'));};photo.src=url;});}
+  function showQuickAddResult(){const box=$('quickAddStatus');box.replaceChildren();box.hidden=false;box.dataset.tone='success';box.append(el('strong','', 'Agent 已创建'),el('span','', ' 图片理解和产品类型分配完成。'));const link=el('a','quick-add-result-link','打开 C 端体验 ↗');link.href=quickAddUrl(quickAddProduct);link.target='_blank';link.rel='noopener';box.append(document.createElement('br'),link);}
+  async function pollQuickAdd(){if(!quickAddProduct)return;clearTimeout(quickAddTimer);try{const base=window.XoulApiBase()+'/api/v1/admin/products/'+encodeURIComponent(quickAddProduct.id),[imageResponse,typeResponse]=await Promise.all([fetch(base+'/image-understanding'),fetch(base+'/type-assignment')]);const image=await imageResponse.json(),assignment=await typeResponse.json();quickAddProduct.image_understanding=image;if(image.product_prompt&&!String(quickAddProduct.prompt||'').trim()){quickAddProduct.prompt=image.product_prompt;quickAddProduct.name=image.subject||'快速添加的产品';quickAddProduct.agent={...quickAddProduct.agent,name:(image.subject||'产品')+' Agent'};}if(assignment.type_id){quickAddProduct.product_type_assignment=assignment;quickAddProduct.type=assignment.type_id;}quickAddProducts(quickAddProduct);if(current?.id===quickAddProduct.id){current=normalize(quickAddProduct);fill();renderProducts();}if(image.status==='failed'){quickAddNotice(image.error||'图片理解失败，产品已创建，可稍后在产品配置中重试。','error');return;}if(image.status!=='ready'){quickAddNotice('图片理解中…','info');quickAddTimer=setTimeout(pollQuickAdd,1600);return;}if(assignment.status==='failed'){quickAddNotice(assignment.error||'产品类型分配失败，产品已创建，可在配置页手动选择类型。','error');return;}if(assignment.status!=='ready'){quickAddNotice('图片理解完成，正在分配产品类型…','info');quickAddTimer=setTimeout(pollQuickAdd,1600);return;}showQuickAddResult();}catch(_){quickAddNotice('正在等待服务器处理…','info');quickAddTimer=setTimeout(pollQuickAdd,2200);}}
+  function resetQuickAdd(){clearTimeout(quickAddTimer);quickAddProduct=null;$('quickAddImage').value='';delete $('quickAddImage').dataset.data;$('quickAddSubmit').disabled=true;$('quickAddPreview').hidden=true;$('quickAddPreview').querySelector('img').removeAttribute('src');quickAddNotice('');}
+  function closeQuickAdd(){clearTimeout(quickAddTimer);if($('quickAddDialog').open)$('quickAddDialog').close();resetQuickAdd();}
+  function openQuickAdd(){resetQuickAdd();if(typeof $('quickAddDialog').showModal==='function')$('quickAddDialog').showModal();else $('quickAddDialog').setAttribute('open','');}
+  $('quickAddTrigger').onclick=openQuickAdd;$('quickAddClose').onclick=closeQuickAdd;$('quickAddCancel').onclick=closeQuickAdd;$('quickAddImage').onchange=async event=>{const file=event.target.files?.[0];if(!file)return;$('quickAddSubmit').disabled=true;quickAddNotice('正在准备图片…','info');try{const data=await quickAddImageData(file);$('quickAddPreview').hidden=false;$('quickAddPreview').querySelector('img').src=data;$('quickAddSubmit').disabled=false;$('quickAddImage').dataset.data=data;quickAddNotice('图片已准备好，可以提交。','info');}catch(error){quickAddNotice(error.message==='size'?'图片请控制在 2MB 以内。':error.message==='dimensions'?'图片不能超过 1600 万像素。':'请选择 PNG、JPG 或 WebP 图片。','error');}};
+  $('quickAddForm').onsubmit=async event=>{event.preventDefault();const image=$('quickAddImage').dataset.data;if(!image)return;const suffix=crypto.randomUUID().replaceAll('-','').slice(0,12),shared=catalog(),defaultType=shared.types.find(item=>item.id==='other')||shared.types[0]||{id:'other',name:'其他'},model=shared.models.find(item=>item.enabled!==false)||shared.models[0]||{};quickAddProduct=normalize({...clone(seed),id:'prod_'+suffix,slug:'agent_'+suffix,name:'识别中的产品',intro:'',type:defaultType.id,image,prompt:'',model_profile_id:model.id||'',image_understanding:null,product_type_assignment:null,knowledge:[],cards:[],agent:{...clone(seed.agent),name:'产品 Agent',role:'',rules:'',memory:false}});quickAddProducts(quickAddProduct);current=normalize(quickAddProduct);dirty=false;fill();renderProducts();$('quickAddSubmit').disabled=true;quickAddNotice('已提交，正在保存图片并启动异步理解…','info');try{await syncBackend(load());pollQuickAdd();}catch(_){quickAddNotice('图片已保存在本地，但服务器提交失败，请确认 API 服务已启动后重试。','error');}};
   function populateSharedCatalog(){
     const shared=catalog(), type=$('productType');
     if(shared.types.length){type.replaceChildren(...shared.types.map(x=>new Option(x.name,x.id)));}
@@ -56,8 +68,9 @@
     const saved=clone(current);saved.model={};
     if(index<0)products.push(saved);else products[index]=saved;
     localStorage.setItem(KEY,JSON.stringify(products));
-    syncBackend(products).then(()=>refreshImageUnderstanding());
+    const sync=syncBackend(products).then(()=>{refreshImageUnderstanding();return true;}).catch(()=>{notice('服务器保存失败，本地修改已保存，请重试。');return false;});
     dirty=false;$('saveState').textContent='本地已保存';$('dirtyHint').textContent='所有修改已保存';renderProducts();stats();
+    return sync;
   }
   function stats(){
     $('knowledgeCount').textContent=current.knowledge.length;$('cardCount').textContent=current.cards.filter(c=>c.enabled!==false).length;
@@ -228,7 +241,7 @@
     if(invalid){tab(panels.indexOf(invalid.closest('.panel')));invalid.reportValidity();return;}
     current.name=current.name.trim();
     if(!current.name){tab(0);$('productName').focus();notice('请填写产品名称。');return;}
-    try{persist();notice('已保存。在预览中查看最新的产品对话。');}catch(_){notice('保存失败，请检查浏览器本地存储空间。');}
+    try{persist().then(ok=>{if(ok)notice('已保存。在预览中查看最新的产品对话。');});}catch(_){notice('保存失败，请检查浏览器本地存储空间。');}
   };
   $('newProduct').onclick=()=>{
     if(dirty&&!confirm('放弃当前未保存的修改并创建产品？'))return;
@@ -300,8 +313,13 @@
       const remote=await response.json();
       if(response.ok&&Array.isArray(remote.products)&&remote.products.length){initial=remote.products;serverHasProducts=true;localStorage.setItem(KEY,JSON.stringify(initial));}
     }catch(_){/* offline/local mode keeps the browser copy */}
+    try{
+      const response=await fetch(window.XoulApiBase()+'/api/v1/admin/user-profiles');
+      const remote=await response.json();
+      if(response.ok&&Array.isArray(remote.user_profiles)&&remote.user_profiles.length)window.XoulProfiles?.save(remote.user_profiles);
+    }catch(_){/* offline/local mode keeps the browser copy */}
     select(initial[0].id);
-    if(!serverHasProducts)syncBackend(initial.map(item=>item.id===current.id?current:item));
+    if(!serverHasProducts)syncBackend(initial.map(item=>item.id===current.id?current:item)).catch(()=>null);
     hydrateSharedCatalog();
   }
   boot().catch(()=>notice('本地产品数据无法读取，请检查存储内容；原始数据未被覆盖。'));

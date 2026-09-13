@@ -15,13 +15,14 @@
     <section id="app" hidden>
       <header class="chat-header">
         <div class="header-identity"><span class="brand-mark" aria-hidden="true">X</span><div><h1 id="product-name"></h1><span id="agent-name">产品助手</span></div></div>
-        <button id="new-chat" class="quiet-button" type="button">＋ 新对话</button>
+        <div class="chat-header-actions"><div class="profile-switcher"><button id="profile-toggle" class="profile-toggle" type="button" aria-expanded="false" aria-controls="profile-menu"><span id="profile-avatar" class="profile-avatar">林</span><span id="profile-name">林夏</span><span class="profile-chevron">⌄</span></button><div id="profile-menu" class="profile-menu" hidden><div class="profile-menu-heading"><strong>当前体验用户</strong><small>切换后开启一段新的对话</small></div><div id="profile-options"></div><a class="profile-manage" href="/profiles.html">管理用户画像 ↗</a></div></div><button id="new-chat" class="quiet-button" type="button">＋ 新对话</button></div>
       </header>
       <section id="chat-root" class="chat-root" aria-label="与产品助手对话"></section>
     </section>
   </main>
   <script src="api-base.js" defer></script>
   <script src="data.js" defer></script>
+  <script src="user-profile-data.js" defer></script>
   <script src="chat-ui-kit.js" defer></script>
   <script src="public.js" defer></script>
 </body>

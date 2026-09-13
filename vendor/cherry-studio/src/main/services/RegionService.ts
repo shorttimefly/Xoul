@@ -1,0 +1,119 @@
+import { net } from 'electron'
+
+import { application } from '@application'
+import { loggerService } from '@logger'
+
+const logger = loggerService.withContext('RegionService')
+
+const CACHE_KEY = 'region.egressCountry'
+// Backstop for egress changes the app cannot observe via events — e.g. a
+// system-level VPN toggle that keeps the primary interface "online". Proxy
+// changes made through the app invalidate sooner via the appliedProxyKey guard.
+const CACHE_TTL = 10 * 60 * 1000
+const REQUEST_TIMEOUT = 5000
+const DEFAULT_COUNTRY = 'CN'
+
+type CachedEgressRegion = {
+  country: string
+  /** ProxyService's applied-config key in effect when this country was detected. */
+  proxyKey: string | null
+}
+
+/**
+ * Detects the user's egress country (and the "is in China" shorthand) by
+ * geolocating the request's public IP, then caches the result.
+ *
+ * The detected country reflects the *egress* IP, which depends on the active
+ * proxy — so the cache is keyed on ProxyService's applied-config key and
+ * invalidates the moment the app's proxy changes, with a TTL backstop for
+ * egress changes the app cannot observe. Single-flight dedups concurrent
+ * detections, including those arriving via the system.get_ip_country IPC.
+ */
+class RegionService {
+  private inflight = new Map<string | null, { promise: Promise<string> }>()
+
+  /** Egress country code (e.g. 'CN', 'US'); defaults to 'CN' on any failure. */
+  async getCountry(): Promise<string> {
+    try {
+      return await this.getDetectedCountry()
+    } catch {
+      return DEFAULT_COUNTRY
+    }
+  }
+
+  /** True only when the egress country is successfully detected as China. */
+  async isInChina(): Promise<boolean> {
+    try {
+      const country = await this.getDetectedCountry()
+      return country.toLowerCase() === 'cn'
+    } catch {
+      return false
+    }
+  }
+
+  private async getDetectedCountry(): Promise<string> {
+    const proxyKey = application.get('ProxyService').appliedProxyKey
+    const cached = application.get('CacheService').get<CachedEgressRegion>(CACHE_KEY)
+    if (cached && cached.proxyKey === proxyKey) {
+      return cached.country
+    }
+
+    // Dedup concurrent detections for the active proxy — callers share one in-flight request.
+    const current = this.inflight.get(proxyKey)
+    if (current) {
+      return current.promise
+    }
+
+    const inflight = {
+      promise: this.detectAndCache(proxyKey)
+    }
+    inflight.promise = inflight.promise.finally(() => {
+      if (this.inflight.get(proxyKey) === inflight) {
+        this.inflight.delete(proxyKey)
+      }
+    })
+    this.inflight.set(proxyKey, inflight)
+    return inflight.promise
+  }
+
+  private async detectAndCache(proxyKey: string | null): Promise<string> {
+    try {
+      const country = await this.fetchCountry()
+      if (application.get('ProxyService').appliedProxyKey === proxyKey) {
+        application.get('CacheService').set<CachedEgressRegion>(CACHE_KEY, { country, proxyKey }, CACHE_TTL)
+      }
+      return country
+    } catch (error) {
+      logger.error('Failed to get IP address information:', error as Error)
+      throw error
+    }
+  }
+
+  private async fetchCountry(): Promise<string> {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT)
+
+    try {
+      const response = await net.fetch('https://api.ipinfo.io/lite/me?token=5aa4105b40adbc', {
+        signal: controller.signal
+      })
+
+      if (!response.ok) {
+        throw new Error(`IP info request failed with HTTP ${response.status}`)
+      }
+
+      const data = await response.json()
+      const country = data.country_code
+      if (!country) {
+        throw new Error('IP info response missing country_code')
+      }
+
+      logger.info(`Detected user IP address country: ${country}`)
+      return country
+    } finally {
+      clearTimeout(timeoutId)
+    }
+  }
+}
+
+export const regionService = new RegionService()

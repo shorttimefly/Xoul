@@ -21,6 +21,47 @@ STORE = ROOT / ".xoul.local.json"
 MAX_BODY = 2 * 1024 * 1024
 STORE_LOCK = threading.RLock()
 IMAGE_JOBS = set()
+TYPE_ASSIGNMENT_JOBS = set()
+PROFILE_HISTORY_LIMIT = 24
+
+
+def seed_user_profiles():
+    """Return the three local demo identities used by the C-end switcher."""
+    return [
+        {
+            "id": "user_linxia",
+            "name": "林夏",
+            "avatar": "林",
+            "headline": "刚开始训练，想循序渐进",
+            "preferences": ["循序渐进", "先讲清楚动作"],
+            "goals": ["每周训练 3 次", "建立稳定习惯"],
+            "notes": "膝盖偶尔紧，希望训练建议温和、可执行。",
+            "enabled": True,
+            "seed": True,
+        },
+        {
+            "id": "user_zhouqi",
+            "name": "周启",
+            "avatar": "周",
+            "headline": "进阶力量训练者",
+            "preferences": ["直接给结论", "关注训练量"],
+            "goals": ["提升下肢力量", "记录渐进超负荷"],
+            "notes": "可以接受更高训练强度，但仍需明确安全边界。",
+            "enabled": True,
+            "seed": True,
+        },
+        {
+            "id": "user_mia",
+            "name": "Mia",
+            "avatar": "M",
+            "headline": "忙碌上班族",
+            "preferences": ["碎片化训练", "回答简短一点"],
+            "goals": ["每次 20 分钟内完成", "保持精力"],
+            "notes": "工作日时间有限，优先推荐低门槛、易坚持的安排。",
+            "enabled": True,
+            "seed": True,
+        },
+    ]
 
 
 def normalize_chat_url(base_url):
@@ -51,7 +92,7 @@ def extract_delta(data):
     return content if isinstance(content, str) else ""
 
 
-def build_messages(type_config, agent_config, entries, history, message, product=None):
+def build_messages(type_config, agent_config, entries, history, message, product=None, user_profile=None, profile_history=None):
     type_config = type_config or {}
     agent_config = agent_config or {}
     knowledge_parts = []
@@ -83,11 +124,35 @@ def build_messages(type_config, agent_config, entries, history, message, product
     workflow_steps = [step.get("type") if isinstance(step, dict) else step for step in workflow]
     workflow_context = "开放式工作流：根据用户问题选择必要的步骤和知识内容，不必机械执行全部步骤；可用步骤：" + json.dumps(workflow_steps, ensure_ascii=False) if workflow_steps else ""
     knowledge_boundary = "知识边界：只回答与当前产品直接相关的问题。优先使用产品知识、图片理解结果和扩展字段；即使知识库包含其他产品或通用内容，也不得把它们当作当前产品能力，不得主动推荐其他器械、外部训练方案或外网事实。知识库没有覆盖时明确说明不确定，不要补充未经知识库支持的外部事实，不主动引入外网信息。"
+    profile = user_profile if isinstance(user_profile, dict) else {}
+    profile_parts = []
+    if profile:
+        profile_parts = [
+            "当前用户画像：",
+            "姓名：" + str(profile.get("name") or "访客"),
+            "用户特征：" + str(profile.get("headline") or ""),
+            "偏好：" + "、".join(str(x) for x in (profile.get("preferences") or [])),
+            "目标：" + "、".join(str(x) for x in (profile.get("goals") or [])),
+            "注意事项：" + str(profile.get("notes") or ""),
+            "请把这些信息作为回答时的个性化参考，不要向用户泄露内部字段或臆造画像之外的事实。",
+        ]
+    recent_profile_history = [
+        item for item in (profile_history or [])[-12:]
+        if isinstance(item, dict) and item.get("role") in ("user", "assistant") and isinstance(item.get("content"), str)
+    ]
+    profile_memory = ""
+    if recent_profile_history:
+        profile_memory = "与当前 Agent 的近期互动：\n" + "\n".join(
+            ("用户：" if item["role"] == "user" else "助手：") + item["content"]
+            for item in recent_profile_history
+        )
     parts = [x for x in [
         "你是有温度的产品实体，请用第一人称与用户交流；称呼自己时使用产品名称。回答准确、自然，不要声称看到了图片之外的信息。",
         "产品名称：" + str(product.get("name", "")), "产品介绍：" + str(product.get("intro", "")),
         knowledge_boundary, workflow_context, product.get("prompt"), type_config.get("prompt"), agent_config.get("role"), agent_config.get("rules"), image_context, extra_context,
-        "产品知识：\n" + knowledge if knowledge else ""
+        "产品知识：\n" + knowledge if knowledge else "",
+        "\n".join(profile_parts) if profile_parts else "",
+        profile_memory,
     ] if x]
     system = "\n\n".join(parts) or "你是一个友好的产品伙伴，请准确回答用户问题。"
     safe_history = []
@@ -103,6 +168,14 @@ def build_vision_messages(image):
     return [{"role": "system", "content": "你是产品图像理解助手。请识别图片主体并结合场景扩写，严格返回 JSON，字段包括 subject（主体）、scene（场景）、use_cases（使用场景数组）、suitable_for（适用人群数组）、usage_method（使用方法）、safety（安全提示）、product_prompt（给这个产品使用的第一人称产品 Prompt）。product_prompt 要描述产品身份、可提供的帮助和安全边界；无法确认的内容请写空数组或空字符串，不要臆测品牌、型号、承重等精确参数。"}, {"role": "user", "content": [{"type": "text", "text": "请理解这张产品图片并按要求返回 JSON。"}, {"type": "image_url", "image_url": {"url": image}}]}]
 
 
+def build_type_assignment_messages(product_prompt, types):
+    candidates = [{"id": item.get("id"), "name": item.get("name")} for item in types if isinstance(item, dict) and item.get("id")]
+    return [
+        {"role": "system", "content": "你是产品类型分配助手。只能从候选产品类型中选择一个最匹配的类型，严格返回 JSON：{\"type_id\":\"候选类型 id\"}。不要创造候选列表之外的 id。"},
+        {"role": "user", "content": "产品 Prompt：\n%s\n\n候选产品类型：\n%s" % (str(product_prompt or ""), json.dumps(candidates, ensure_ascii=False))},
+    ]
+
+
 def image_hash(image):
     return hashlib.sha256(str(image).encode("utf-8")).hexdigest()
 
@@ -113,12 +186,17 @@ def redact_profile(profile):
 
 def load_store():
     if not STORE.exists():
-        return {"products": [], "catalog": {"types": [], "models": []}}
+        return {"products": [], "catalog": {"types": [], "models": []}, "user_profiles": seed_user_profiles()}
     try:
         value = json.loads(STORE.read_text(encoding="utf-8"))
-        return value if isinstance(value, dict) else {"products": [], "catalog": {"types": [], "models": []}}
+        if not isinstance(value, dict):
+            return {"products": [], "catalog": {"types": [], "models": []}, "user_profiles": seed_user_profiles()}
+        value.setdefault("products", [])
+        value.setdefault("catalog", {"types": [], "models": []})
+        value.setdefault("user_profiles", seed_user_profiles())
+        return value
     except (OSError, ValueError):
-        return {"products": [], "catalog": {"types": [], "models": []}}
+        return {"products": [], "catalog": {"types": [], "models": []}, "user_profiles": seed_user_profiles()}
 
 
 def save_store(value):
@@ -180,6 +258,22 @@ def find_product(slug, store):
     return next((p for p in store.get("products", []) if p.get("slug") == slug), None)
 
 
+def get_image_understanding(product_id, store=None):
+    store = store if isinstance(store, dict) else load_store()
+    product = next((x for x in store.get("products", []) if x.get("id") == product_id), None)
+    if not product:
+        return None
+    return product.get("image_understanding") or {"status": "idle"}
+
+
+def get_type_assignment(product_id, store=None):
+    store = store if isinstance(store, dict) else load_store()
+    product = next((x for x in store.get("products", []) if x.get("id") == product_id), None)
+    if not product:
+        return None
+    return product.get("product_type_assignment") or {"status": "idle"}
+
+
 def merge_catalog(incoming, existing):
     incoming = incoming if isinstance(incoming, dict) else {}
     existing = existing if isinstance(existing, dict) else {}
@@ -198,6 +292,44 @@ def sync_products(body, existing):
     return body["products"] if isinstance(body, dict) and "products" in body and isinstance(body["products"], list) else existing
 
 
+def sync_user_profiles(body, existing):
+    """Keep persisted profiles when an older browser omits the new field."""
+    return body["user_profiles"] if isinstance(body, dict) and "user_profiles" in body and isinstance(body["user_profiles"], list) else existing
+
+
+def public_user_profiles(profiles):
+    fields = ("id", "name", "avatar", "headline", "preferences", "goals", "notes", "enabled", "seed")
+    return [{key: profile.get(key) for key in fields if key in profile} for profile in (profiles or []) if isinstance(profile, dict) and profile.get("enabled", True) is not False]
+
+
+def record_profile_event(store, profile_id, agent_id, role, content):
+    """Append an interaction without dropping older events; injection is bounded separately."""
+    if not isinstance(store, dict) or role not in ("user", "assistant") or not str(content or "").strip():
+        return None
+    profile = next((item for item in store.get("user_profiles", []) if isinstance(item, dict) and item.get("id") == profile_id), None)
+    if not profile:
+        return None
+    event = {"id": "profile_event_%d" % int(time.time() * 1000), "agent_id": str(agent_id), "role": role, "content": str(content), "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    profile.setdefault("agent_history", []).append(event)
+    return event
+
+
+def persist_profile_event(profile_id, agent_id, role, content):
+    """Atomically append one event to the shared local store."""
+    with STORE_LOCK:
+        store = load_store()
+        event = record_profile_event(store, profile_id, agent_id, role, content)
+        if event:
+            save_store(store)
+        return event
+
+
+def profile_history_for_agent(profile, agent_id, limit=PROFILE_HISTORY_LIMIT):
+    if not isinstance(profile, dict):
+        return []
+    return [item for item in profile.get("agent_history", []) if isinstance(item, dict) and item.get("agent_id") == str(agent_id)][-limit:]
+
+
 def parse_json_object(text):
     value = str(text or "").strip().replace("```json", "").replace("```", "").strip()
     try:
@@ -212,12 +344,80 @@ def parse_json_object(text):
             return None
 
 
+def run_product_type_assignment(product_id, expected_prompt_hash):
+    try:
+        store = load_store()
+        product = next((p for p in store.get("products", []) if p.get("id") == product_id), None)
+        prompt = str((product or {}).get("prompt") or "")
+        if not product or not prompt or image_hash(prompt) != expected_prompt_hash:
+            TYPE_ASSIGNMENT_JOBS.discard((product_id, expected_prompt_hash))
+            return
+        product["product_type_assignment"] = {"status": "processing", "prompt_hash": expected_prompt_hash}
+        save_store(store)
+        store = load_store()
+        product = next((p for p in store.get("products", []) if p.get("id") == product_id), None)
+        if not product:
+            TYPE_ASSIGNMENT_JOBS.discard((product_id, expected_prompt_hash))
+            return
+        types = [item for item in store.get("catalog", {}).get("types", []) if isinstance(item, dict) and item.get("id")]
+        profile = next((x for x in store.get("catalog", {}).get("models", []) if x.get("id") == product.get("model_profile_id")), {})
+        if not types:
+            result = {"status": "failed", "prompt_hash": expected_prompt_hash, "error": "尚未配置产品类型。"}
+        elif not profile.get("api_key") or not profile.get("base_url") or not (profile.get("model") or profile.get("name")):
+            result = {"status": "failed", "prompt_hash": expected_prompt_hash, "error": "请先配置模型后再分配产品类型。"}
+        else:
+            api_key = str(profile["api_key"]); authorization = api_key if api_key.lower().startswith("bearer ") else "Bearer " + api_key
+            payload = {"model": profile.get("model") or profile.get("name"), "messages": build_type_assignment_messages(prompt, types), "temperature": .1, "max_tokens": 120, "stream": False}
+            request = urllib.request.Request(normalize_chat_url(profile["base_url"]), data=json.dumps(payload).encode("utf-8"), headers={"Content-Type": "application/json", "Authorization": authorization}, method="POST")
+            response = urllib.request.urlopen(request, timeout=120); data = json.loads(response.read().decode("utf-8")); response.close()
+            choices = data.get("choices") or []; message = choices[0].get("message", {}) if choices else {}; content = message.get("content", "") if isinstance(message, dict) else ""
+            selected = parse_json_object(content) or {}
+            selected_id = str(selected.get("type_id") or selected.get("type") or "").strip()
+            match = next((item for item in types if selected_id in (str(item.get("id")), str(item.get("name")))), None)
+            result = {"status": "ready", "prompt_hash": expected_prompt_hash, "type_id": match["id"]} if match else {"status": "failed", "prompt_hash": expected_prompt_hash, "error": "模型返回了无效的产品类型。"}
+    except urllib.error.HTTPError as error:
+        result = {"status": "failed", "prompt_hash": expected_prompt_hash, "error": "产品类型模型返回 HTTP %d。" % error.code}
+    except (urllib.error.URLError, TimeoutError, ValueError, OSError) as error:
+        result = {"status": "failed", "prompt_hash": expected_prompt_hash, "error": "产品类型分配失败：" + str(error)[:160]}
+    store = load_store(); products = store.get("products", [])
+    for item in products:
+        if item.get("id") == product_id and image_hash(str(item.get("prompt") or "")) == expected_prompt_hash:
+            item["product_type_assignment"] = result
+            if result.get("status") == "ready":
+                item["type"] = result["type_id"]
+    save_store(store)
+    TYPE_ASSIGNMENT_JOBS.discard((product_id, expected_prompt_hash))
+
+
+def queue_product_type_assignment(product_id, prompt):
+    prompt = str(prompt or "").strip()
+    if not prompt:
+        return
+    expected_prompt_hash = image_hash(prompt)
+    with STORE_LOCK:
+        store = load_store(); product = next((p for p in store.get("products", []) if p.get("id") == product_id), None)
+        if not product or str(product.get("prompt") or "").strip() != prompt:
+            return
+        if not any(isinstance(item, dict) and item.get("id") for item in store.get("catalog", {}).get("types", [])):
+            return
+        current = product.get("product_type_assignment") or {}
+        if current.get("prompt_hash") == expected_prompt_hash and current.get("status") in ("queued", "processing", "ready", "failed"):
+            return
+        product["product_type_assignment"] = {"status": "queued", "prompt_hash": expected_prompt_hash}
+        save_store(store)
+    key = (product_id, expected_prompt_hash)
+    if key not in TYPE_ASSIGNMENT_JOBS:
+        TYPE_ASSIGNMENT_JOBS.add(key); threading.Thread(target=run_product_type_assignment, args=key, daemon=True).start()
+
+
 def run_image_understanding(product_id, expected_hash):
     try:
         store = load_store(); product = next((p for p in store.get("products", []) if p.get("id") == product_id), None)
         if not product or not product.get("image") or image_hash(product["image"]) != expected_hash:
             IMAGE_JOBS.discard((product_id, expected_hash))
             return
+        product["image_understanding"] = {"status": "processing", "image_hash": expected_hash}
+        save_store(store)
         catalog = store.get("catalog", {}); profile = next((x for x in catalog.get("models", []) if x.get("id") == product.get("model_profile_id")), {})
         if not profile.get("api_key") or not profile.get("base_url") or not (profile.get("model") or profile.get("name")):
             result = {"status": "failed", "image_hash": expected_hash, "error": "请先配置支持视觉输入的模型地址、模型标识和 API Key。"}
@@ -240,6 +440,8 @@ def run_image_understanding(product_id, expected_hash):
             if result.get("product_prompt") and not str(item.get("prompt") or "").strip():
                 item["prompt"] = result["product_prompt"]
     save_store(store)
+    if result.get("status") == "ready" and result.get("product_prompt"):
+        queue_product_type_assignment(product_id, result["product_prompt"])
     IMAGE_JOBS.discard((product_id, expected_hash))
 
 
@@ -297,6 +499,22 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(200, admin_catalog(load_store().get("catalog", {})))
         if path == "/api/v1/admin/products":
             return self.send_json(200, {"products": admin_products(load_store().get("products", []))})
+        if path == "/api/v1/admin/user-profiles":
+            return self.send_json(200, {"user_profiles": load_store().get("user_profiles", seed_user_profiles())})
+        if path == "/api/v1/public/user-profiles":
+            return self.send_json(200, {"user_profiles": public_user_profiles(load_store().get("user_profiles", seed_user_profiles()))})
+        match = re.fullmatch(r"/api/v1/admin/products/([^/]+)/image-understanding", path)
+        if match:
+            result = get_image_understanding(unquote(match.group(1)))
+            if result is None:
+                return self.send_json(404, {"error": {"code": "PRODUCT_NOT_FOUND", "message": "产品不存在"}})
+            return self.send_json(200, result)
+        match = re.fullmatch(r"/api/v1/admin/products/([^/]+)/type-assignment", path)
+        if match:
+            result = get_type_assignment(unquote(match.group(1)))
+            if result is None:
+                return self.send_json(404, {"error": {"code": "PRODUCT_NOT_FOUND", "message": "产品不存在"}})
+            return self.send_json(200, result)
         match = re.fullmatch(r"/api/v1/public/entrypoints/(.+)", path)
         if match:
             store = load_store(); product = find_product(unquote(match.group(1)), store)
@@ -312,13 +530,28 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, OSError):
             return self.send_json(400, {"error": {"code": "INVALID_JSON", "message": "请求格式无效"}})
         if path == "/api/v1/admin/sync":
-            previous = load_store(); products = sync_products(body, previous.get("products", [])); catalog = merge_catalog(body.get("catalog", {}), previous.get("catalog", {})); save_store({"products": products, "catalog": catalog}); queue_image_understanding(products)
+            previous = load_store(); products = sync_products(body, previous.get("products", [])); catalog = merge_catalog(body.get("catalog", {}), previous.get("catalog", {})); user_profiles = sync_user_profiles(body, previous.get("user_profiles", seed_user_profiles()))
+            try:
+                save_store({"products": products, "catalog": catalog, "user_profiles": user_profiles})
+            except OSError:
+                return self.send_json(500, {"error": {"code": "STORE_WRITE_FAILED", "message": "产品配置保存失败，请联系管理员"}})
+            queue_image_understanding(products)
+            return self.send_json(200, {"ok": True})
+        if path == "/api/v1/admin/user-profiles":
+            profiles = body.get("user_profiles")
+            if not isinstance(profiles, list):
+                return self.send_json(400, {"error": {"code": "INVALID_PROFILES", "message": "用户画像格式无效"}})
+            store = load_store(); store["user_profiles"] = profiles
+            try:
+                save_store(store)
+            except OSError:
+                return self.send_json(500, {"error": {"code": "STORE_WRITE_FAILED", "message": "用户画像保存失败"}})
             return self.send_json(200, {"ok": True})
         match = re.fullmatch(r"/api/v1/admin/products/([^/]+)/image-understanding", path)
         if match:
-            store = load_store(); product = next((x for x in store.get("products", []) if x.get("id") == unquote(match.group(1))), None)
-            if not product: return self.send_json(404, {"error": {"code": "PRODUCT_NOT_FOUND", "message": "产品不存在"}})
-            return self.send_json(200, product.get("image_understanding") or {"status": "idle"})
+            result = get_image_understanding(unquote(match.group(1)))
+            if result is None: return self.send_json(404, {"error": {"code": "PRODUCT_NOT_FOUND", "message": "产品不存在"}})
+            return self.send_json(200, result)
         match = re.fullmatch(r"/api/v1/public/experiences/(.+)/chat", path)
         if match:
             return self.chat(unquote(match.group(1)), body)
@@ -328,18 +561,24 @@ class Handler(BaseHTTPRequestHandler):
         store = load_store(); product = find_product(slug, store)
         if not product or product.get("enabled") is False:
             return self.send_json(404, {"error": {"code": "ENTRYPOINT_UNAVAILABLE", "message": "产品入口不可用"}})
+        profile_id = str(body.get("profile_id") or "")
+        user_profile = next((item for item in store.get("user_profiles", []) if isinstance(item, dict) and item.get("id") == profile_id and item.get("enabled", True) is not False), None)
+        agent_id = (product.get("agent") or {}).get("id") or product.get("id") or slug
+        if user_profile:
+            persist_profile_event(profile_id, agent_id, "user", body.get("message", ""))
         catalog = store.get("catalog", {}); product_model = product.get("model") or {}
-        profile_id = product.get("model_profile_id")
-        profile = next((x for x in catalog.get("models", []) if x.get("id") == profile_id), {})
+        model_profile_id = product.get("model_profile_id")
+        profile = next((x for x in catalog.get("models", []) if x.get("id") == model_profile_id), {})
         profile = {**product_model, **profile}
         base_url, model, api_key = profile.get("base_url", ""), profile.get("model", "") or profile.get("name", ""), profile.get("api_key", "")
         if not base_url or not model or not api_key:
             return self.send_json(503, {"error": {"code": "MODEL_NOT_CONFIGURED", "message": "尚未配置可用的模型地址、模型标识或 API Key"}})
         type_config = next((x for x in catalog.get("types", []) if x.get("id") == product.get("type")), {})
-        messages = build_messages(type_config, product.get("agent"), [{"title": x.get("title"), "content": x.get("body"), "image": x.get("image")} for x in product.get("knowledge", [])], body.get("messages"), body.get("message", ""), product)
+        messages = build_messages(type_config, product.get("agent"), [{"title": x.get("title"), "content": x.get("body"), "image": x.get("image")} for x in product.get("knowledge", [])], body.get("messages"), body.get("message", ""), product, user_profile, profile_history_for_agent(user_profile, agent_id))
         payload = {"model": model, "messages": messages, "temperature": profile.get("temperature", .3), "max_tokens": profile.get("max_tokens", 2048), "stream": True}
         authorization = api_key if api_key.lower().startswith("bearer ") else "Bearer " + api_key
         request = urllib.request.Request(normalize_chat_url(base_url), data=json.dumps(payload).encode("utf-8"), headers={"Content-Type": "application/json", "Accept": "text/event-stream", "Authorization": authorization}, method="POST")
+        accumulated = ""
         try:
             upstream = urllib.request.urlopen(request, timeout=120)
         except urllib.error.HTTPError as error:
@@ -354,10 +593,13 @@ class Handler(BaseHTTPRequestHandler):
                     continue
                 data = line[5:].strip(); delta = extract_delta(data)
                 if delta:
+                    accumulated += delta
                     packet = json.dumps({"type": "delta", "text": delta}, ensure_ascii=False)
                     self.wfile.write(("data: " + packet + "\n\n").encode("utf-8")); self.wfile.flush()
                 if data == "[DONE]":
                     break
+            if user_profile and accumulated:
+                persist_profile_event(profile_id, agent_id, "assistant", accumulated)
             self.wfile.write(b"data: [DONE]\n\n"); self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError):
             pass

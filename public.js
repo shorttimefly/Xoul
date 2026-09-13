@@ -41,13 +41,21 @@
       badge.replaceChildren(photo);
     }
     document.getElementById('app').hidden=false;
-    const historyKey='xoul:chat:v2:'+config.product.id+':'+config.experience.id;
+    let profiles=(window.XoulProfiles?.load?.()||[]).filter(profile=>profile.enabled!==false);
+    try{const response=await fetch(API_BASE+'/api/v1/public/user-profiles');const payload=await response.json();if(response.ok&&Array.isArray(payload.user_profiles)&&payload.user_profiles.length){profiles=payload.user_profiles;window.XoulProfiles?.save(payload.user_profiles);}}catch(_){}
+    if(!profiles.length){state('没有可用的体验用户','请先到管理端启用至少一个用户画像。');return;}
+    const activeKey='xoul:active-profile:v1';let activeProfile=profiles.find(profile=>profile.id===localStorage.getItem(activeKey))||profiles[0];localStorage.setItem(activeKey,activeProfile.id);
+    const toggle=document.getElementById('profile-toggle'),menu=document.getElementById('profile-menu'),options=document.getElementById('profile-options');
+    document.getElementById('profile-avatar').textContent=activeProfile.avatar||activeProfile.name?.slice(0,1)||'?';document.getElementById('profile-name').textContent=activeProfile.name||'体验用户';
+    profiles.forEach(profile=>{const button=document.createElement('button');button.type='button';button.className='profile-option'+(profile.id===activeProfile.id?' active':'');button.setAttribute('aria-pressed',String(profile.id===activeProfile.id));const avatar=document.createElement('span'),copy=document.createElement('span'),name=document.createElement('strong'),headline=document.createElement('small');avatar.className='profile-avatar';avatar.textContent=profile.avatar||profile.name?.slice(0,1)||'?';name.textContent=profile.name;headline.textContent=profile.headline||'体验用户';copy.append(name,headline);button.append(avatar,copy);button.onclick=()=>{if(profile.id!==activeProfile.id&&!window.xoulChat?.busy){localStorage.setItem(activeKey,profile.id);location.reload();}};options.append(button);});
+    toggle.onclick=()=>{const open=menu.hidden;menu.hidden=!open;toggle.setAttribute('aria-expanded',String(open));};document.addEventListener('click',event=>{if(!event.target.closest('.profile-switcher')){menu.hidden=true;toggle.setAttribute('aria-expanded','false');}});
+    const historyKey='xoul:chat:v3:'+activeProfile.id+':'+config.product.id+':'+config.experience.id;
     let history=[];
     try{history=JSON.parse(localStorage.getItem(historyKey)||'[]');if(!Array.isArray(history))history=[];}catch(_){}
     const adapter={
       async *send({message,messages,signal}){
         const history=messages?.[messages.length-1]?.role==='user'?messages.slice(0,-1):messages;
-        const response=await fetch(API_BASE+'/api/v1/public/experiences/'+encodeURIComponent(slug)+'/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message,messages:history}),signal});
+        const response=await fetch(API_BASE+'/api/v1/public/experiences/'+encodeURIComponent(slug)+'/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({profile_id:activeProfile.id,message,messages:history}),signal});
         if(!response.ok){let detail='模型服务暂不可用';try{detail=(await response.json()).error?.message||detail;}catch(_){}throw new Error(detail);}
         if(!response.body)throw new Error('模型服务未返回流式响应');
         const reader=response.body.getReader(),decoder=new TextDecoder();let buffer='';
