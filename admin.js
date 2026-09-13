@@ -242,13 +242,13 @@
   $('importKnowledge').onclick=()=>$('knowledgeFile').click();
   $('knowledgeFile').addEventListener('change',async event=>{
     const file=event.target.files?.[0];event.target.value='';if(!file)return;
-    const isMarkdown=/\.md$/i.test(file.name)||file.type==='text/markdown',isImage=['image/png','image/jpeg','image/webp'].includes(file.type);
-    if(!isMarkdown&&!isImage){notice('请选择 Markdown（.md）、PNG、JPG 或 WebP 文件。');return;}
-    if(file.size>2*1024*1024){notice('Markdown 文件请控制在 2MB 以内。');return;}
+    const isMarkdown=/\.md$/i.test(file.name)||file.type==='text/markdown',isCsv=/\.csv$/i.test(file.name)||file.type==='text/csv',isImage=['image/png','image/jpeg','image/webp'].includes(file.type);
+    if(!isMarkdown&&!isCsv&&!isImage){notice('请选择 Markdown（.md）、CSV、PNG、JPG 或 WebP 文件。');return;}
+    if(file.size>2*1024*1024){notice('Markdown / CSV 文件请控制在 2MB 以内。');return;}
     try{
-      if(isMarkdown){
-        const body=await file.text();if(!body.trim()){notice('这个 Markdown 文件没有可导入的内容。');return;}
-        current.knowledge.push({title:file.name.replace(/\.md$/i,''),body,source:'Markdown 文件'});
+      if(isMarkdown||isCsv){
+        const body=await file.text(),text=body.replace(/^\uFEFF/,'');if(!text.trim()){notice('这个文件没有可导入的内容。');return;}
+        current.knowledge.push({title:file.name.replace(/\.(?:md|csv)$/i,''),body:text,source:isCsv?'CSV 文件':'Markdown 文件'});
       }else{
         const url=URL.createObjectURL(file),photo=new Image();photo.src=url;await photo.decode();
         const scale=Math.min(1,1200/Math.max(photo.naturalWidth,photo.naturalHeight)),canvas=document.createElement('canvas');
@@ -256,7 +256,7 @@
         current.knowledge.push({title:file.name.replace(/\.[^.]+$/,''),body:'知识库图片：请在对话中参考这张图片。',image:canvas.toDataURL('image/webp',0.82),source:'图片文件'});
       }
       renderKnowledge();mark();notice('已导入「'+file.name+'」，保存产品配置后会带入 C 端上下文。');
-    }catch(_){notice('Markdown 文件读取失败，请重试。');}
+    }catch(_){notice('知识库文件读取失败，请重试。');}
   });
   $('addStep').onclick=()=>{current.workflow.push('retrieve_knowledge');renderWorkflow();mark();};
   $('addCard').onclick=()=>{current.cards.push({title:'新功能卡片',prompt:'',capability:'custom'});renderCards();mark();};
